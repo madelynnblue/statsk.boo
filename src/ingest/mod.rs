@@ -9,6 +9,7 @@ use drive::DriveClient;
 use tracing::{error, info, warn};
 
 pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
+    info!("ingest loop starting");
     let client = DriveClient::new(cfg.google_api_key.clone());
     loop {
         if let Err(e) = run_ingest(&cfg, &pool, &client).await {
@@ -18,7 +19,19 @@ pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
     }
 }
 
+async fn game_count(pool: &PgPool) -> anyhow::Result<i64> {
+    let row = sqlx::query("SELECT COUNT(*) FROM games")
+        .fetch_one(pool).await?;
+    Ok(row.try_get(0)?)
+}
+
 async fn run_ingest(cfg: &Config, pool: &PgPool, client: &DriveClient) -> anyhow::Result<()> {
+    let count = game_count(pool).await?;
+    if count >= 10 {
+        info!("database has {count} games, skipping ingest (dev mode)");
+        return Ok(());
+    }
+
     let last_ingest = last_ingest_at(pool).await?;
 
     let files = match last_ingest {
@@ -37,9 +50,10 @@ async fn run_ingest(cfg: &Config, pool: &PgPool, client: &DriveClient) -> anyhow
     info!("found {} candidate file(s)", files.len());
 
     for file in files {
+        info!("ingesting {}", file.name);
         match process_file(pool, client, &file.id, &file.name).await {
             Ok(true)  => info!("ingested {}", file.name),
-            Ok(false) => {},
+            Ok(false) => info!("skipped {} (already present)", file.name),
             Err(e)    => warn!("skipping {}: {e:#}", file.name),
         }
     }
@@ -71,22 +85,18 @@ async fn process_file(
     let (game, date) = parse::parse_statsbook_with_date(&bytes)
         .map_err(|e| anyhow::anyhow!("parse error in {file_name}: {e:#}"))?;
 
-    let home_score = game.total_score("home");
-    let away_score = game.total_score("away");
     let player_search = game.player_search_text();
     let team_search = game.team_search_text();
     let data = serde_json::to_value(&game)?;
 
     sqlx::query(
         r#"INSERT INTO games
-           (drive_file_id, date, home_score, away_score, data, player_search, team_search)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           (drive_file_id, date, data, player_search, team_search)
+           VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (drive_file_id) DO NOTHING"#,
     )
     .bind(file_id)
     .bind(date)
-    .bind(home_score as i16)
-    .bind(away_score as i16)
     .bind(&data)
     .bind(&player_search)
     .bind(&team_search)

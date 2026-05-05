@@ -36,7 +36,7 @@ pub async fn handle(
     use sqlx::Row;
 
     let rows = sqlx::query(
-        r#"SELECT drive_file_id, date, home_score, away_score, data::text as data_text FROM games
+        r#"SELECT drive_file_id, date, data::text as data_text FROM games
            WHERE data @> jsonb_build_object('home', jsonb_build_object('league', $1::text, 'team', $2::text))
               OR data @> jsonb_build_object('away', jsonb_build_object('league', $1::text, 'team', $2::text))
            ORDER BY date DESC"#,
@@ -57,13 +57,13 @@ pub async fn handle(
             && game.home.team.as_deref() == Some(&params.team)
         { "home" } else { "away" };
 
-        let home_score: i32 = row.try_get("home_score")?;
-        let away_score: i32 = row.try_get("away_score")?;
+        let home_score = game.total_score("home");
+        let away_score = game.total_score("away");
 
         let (our_score, their_score) = if side == "home" {
-            (home_score as i16, away_score as i16)
+            (home_score, away_score)
         } else {
-            (away_score as i16, home_score as i16)
+            (away_score, home_score)
         };
 
         let result = match our_score.cmp(&their_score) {

@@ -24,8 +24,11 @@ impl From<sqlx::Error> for AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, body) = match self {
-            AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_string()),
+        let (status, body) = match &self {
+            AppError::Internal(e) => {
+                tracing::error!("{e:#}");
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_string())
+            }
             AppError::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
         };
         (status, body).into_response()

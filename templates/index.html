@@ -2,5 +2,29 @@
 {% block title %}Home{% endblock %}
 {% block content %}
 <p>Search for a player or team above to see career stats and game history.</p>
+{% if games %}
+<h2>Recent Games</h2>
+<table>
+  <thead>
+    <tr><th>Date</th><th>Home</th><th>Away</th><th>Score</th></tr>
+  </thead>
+  <tbody>
+    {% for g in games %}
+    <tr>
+      <td>{% if g.date %}{{ g.date }}{% endif %}</td>
+      <td>{{ g.home_team }}</td>
+      <td>{{ g.away_team }}</td>
+      <td>
+        <a href="/game/{{ g.drive_file_id }}">
+          {% if g.home_score is not none %}{{ g.home_score }}{% else %}—{% endif %}
+          –
+          {% if g.away_score is not none %}{{ g.away_score }}{% else %}—{% endif %}
+        </a>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
 <p>Data sourced from the <a href="https://drive.google.com/drive/folders/1TC1QUmpIwy9NZX9DBPUPoHjkjFbbzyYr">WFTDA Public StatsBook Repository</a>.</p>
 {% endblock %}

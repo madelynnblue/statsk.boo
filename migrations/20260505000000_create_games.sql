@@ -1,11 +1,8 @@
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TABLE IF NOT EXISTS games (
-  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  drive_file_id  TEXT NOT NULL UNIQUE,
+  drive_file_id  TEXT PRIMARY KEY,
   date           DATE,
-  home_score     SMALLINT,
-  away_score     SMALLINT,
   ingested_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   data           JSONB NOT NULL,
   player_search  TEXT NOT NULL DEFAULT '',
