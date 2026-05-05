@@ -7,6 +7,9 @@ pub async fn connect(database_url: &str) -> Result<PgPool> {
 }
 
 pub async fn migrate(pool: &PgPool) -> Result<()> {
-    sqlx::migrate!("./migrations").run(pool).await?;
+    sqlx::migrate!("./migrations")
+        .set_locking(false)
+        .run(pool)
+        .await?;
     Ok(())
 }
