@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}{{ game.home.team | default("Home") }} vs {{ game.away.team | default("Away") }}{% endblock %}
+{% block content %}
+<h1>{{ game.home.team | default("Home") }} vs {{ game.away.team | default("Away") }}</h1>
+<p>
+  {{ date }}
+  {% if game.venue.name %} · {{ game.venue.name }}{% endif %}
+  {% if game.venue.city %}, {{ game.venue.city }}{% endif %}
+  {% if game.tournament %} · {{ game.tournament }}{% endif %}
+</p>
+
+<h2>Final Score: {{ home_score }}–{{ away_score }}</h2>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;margin:1rem 0">
+  <div>
+    <h3>{{ game.home.team | default("Home") }}{% if game.home.color %} · {{ game.home.color }}{% endif %}</h3>
+    <table>
+      <thead><tr><th>#</th><th>Name</th></tr></thead>
+      <tbody>
+      {% for s in game.home.skaters %}
+        <tr>
+          <td>{{ s.number }}</td>
+          <td><a href="/player?league={{ game.home.league | urlencode }}&name={{ s.name | urlencode }}&number={{ s.number | urlencode }}">{{ s.name }}</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div>
+    <h3>{{ game.away.team | default("Away") }}{% if game.away.color %} · {{ game.away.color }}{% endif %}</h3>
+    <table>
+      <thead><tr><th>#</th><th>Name</th></tr></thead>
+      <tbody>
+      {% for s in game.away.skaters %}
+        <tr>
+          <td>{{ s.number }}</td>
+          <td><a href="/player?league={{ game.away.league | urlencode }}&name={{ s.name | urlencode }}&number={{ s.number | urlencode }}">{{ s.name }}</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% for period in game.periods %}
+<h2>Period {{ period.number }}</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Jam</th>
+      <th colspan="4">{{ game.home.team | default("Home") }}</th>
+      <th colspan="4">{{ game.away.team | default("Away") }}</th>
+    </tr>
+    <tr>
+      <th>#</th>
+      <th>Jammer</th><th>Lead</th><th>Pts</th><th>Lineup</th>
+      <th>Jammer</th><th>Lead</th><th>Pts</th><th>Lineup</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for jam in period.jams %}
+    <tr>
+      <td>{{ jam.number }}</td>
+      <td>{{ jam.home.jammer | default("-") }}</td>
+      <td>{% if jam.home.lead %}L{% endif %}{% if jam.home.lost %}X{% endif %}{% if jam.home.called %}C{% endif %}</td>
+      <td>{{ jam.home.score }}</td>
+      <td>{% for e in jam.home.lineup %}{{ e.number }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+      <td>{{ jam.away.jammer | default("-") }}</td>
+      <td>{% if jam.away.lead %}L{% endif %}{% if jam.away.lost %}X{% endif %}{% if jam.away.called %}C{% endif %}</td>
+      <td>{{ jam.away.score }}</td>
+      <td>{% for e in jam.away.lineup %}{{ e.number }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endfor %}
+
+{% if game.penalties %}
+<h2>Penalties</h2>
+<table>
+  <thead><tr><th>Side</th><th>#</th><th>Period</th><th>Jam</th><th>Code</th><th>FO</th></tr></thead>
+  <tbody>
+  {% for p in game.penalties %}
+    <tr>
+      <td>{{ p.side }}</td>
+      <td>{{ p.number }}</td>
+      <td>{{ p.period }}</td>
+      <td>{{ p.jam | default("-") }}</td>
+      <td>{{ p.code }}</td>
+      <td>{% if p.foul_out %}FO{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

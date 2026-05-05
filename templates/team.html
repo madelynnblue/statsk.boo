@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{{ team }}{% endblock %}
+{% block content %}
+<h1>{{ team }}</h1>
+<p>{{ league }}</p>
+
+<h2>Record</h2>
+<div class="stats-grid">
+  <div class="stat-card"><div class="stat">{{ record.wins }}</div><div class="stat-label">Wins</div></div>
+  <div class="stat-card"><div class="stat">{{ record.losses }}</div><div class="stat-label">Losses</div></div>
+  <div class="stat-card"><div class="stat">{{ record.ties }}</div><div class="stat-label">Ties</div></div>
+</div>
+
+<h2>Game History</h2>
+{% if games %}
+<table>
+  <thead><tr><th>Date</th><th>Opponent</th><th>Score</th><th>Result</th></tr></thead>
+  <tbody>
+  {% for g in games %}
+    <tr>
+      <td><a href="/game/{{ g.drive_file_id }}">{{ g.date }}</a></td>
+      <td>{{ g.opponent_team }}<br><small>{{ g.opponent_league }}</small></td>
+      <td>{{ g.our_score }}–{{ g.their_score }}</td>
+      <td><strong>{{ g.result }}</strong></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No games found.</p>
+{% endif %}
+{% endblock %}

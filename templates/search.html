@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Search: {{ query }}{% endblock %}
+{% block content %}
+{% if query | length >= 2 %}
+  <h2>Players</h2>
+  {% if players %}
+  <table>
+    <thead><tr><th>Name</th><th>#</th><th>Team</th><th>League</th></tr></thead>
+    <tbody>
+    {% for p in players %}
+      <tr>
+        <td><a href="/player?league={{ p.league | urlencode }}&name={{ p.name | urlencode }}&number={{ p.number | urlencode }}">{{ p.name }}</a></td>
+        <td>{{ p.number }}</td>
+        <td>{{ p.team }}</td>
+        <td>{{ p.league }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No players found for "{{ query }}".</p>
+  {% endif %}
+
+  <h2>Teams</h2>
+  {% if teams %}
+  <table>
+    <thead><tr><th>Team</th><th>League</th></tr></thead>
+    <tbody>
+    {% for t in teams %}
+      <tr>
+        <td><a href="/team?league={{ t.league | urlencode }}&team={{ t.team | urlencode }}">{{ t.team }}</a></td>
+        <td>{{ t.league }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No teams found for "{{ query }}".</p>
+  {% endif %}
+{% else %}
+<p>Enter at least 2 characters to search.</p>
+{% endif %}
+{% endblock %}
