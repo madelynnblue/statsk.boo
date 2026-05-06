@@ -23,7 +23,7 @@ pub async fn serve(cfg: Arc<Config>, pool: Arc<PgPool>) -> anyhow::Result<()> {
         .route("/player", get(handlers::player::handle))
         .route("/team", get(handlers::team::handle))
         .route("/league", get(handlers::league::handle))
-        .route("/game/{drive_file_id}", get(handlers::game::handle))
+        .route("/game/{*drive_file_id}", get(handlers::game::handle))
         .with_state(state);
 
     let addr: std::net::SocketAddr = cfg.bind_addr.parse()?;
