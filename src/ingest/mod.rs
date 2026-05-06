@@ -263,122 +263,152 @@ async fn insert_parsed_file(
 
     let periods = serde_json::to_value(&game.periods)?;
     let penalties = serde_json::to_value(&game.penalties)?;
+    let home_stats = game
+        .game_summary
+        .as_ref()
+        .map(|s| -> serde_json::Result<_> {
+            Ok((
+                serde_json::to_value(&crate::models::SideStats {
+                    players: s.home_players.clone(),
+                    totals: s.home_totals.clone(),
+                })?,
+                serde_json::to_value(&crate::models::SideStats {
+                    players: s.away_players.clone(),
+                    totals: s.away_totals.clone(),
+                })?,
+            ))
+        })
+        .transpose()?;
 
-    let mut tx = pool.begin().await?;
+    let mut attempt = 0;
+    loop {
+        let mut tx = pool.begin().await?;
 
-    // Remove the row we are about to replace (noop for new files; clears old data for re-ingest).
-    sqlx::query!("DELETE FROM games WHERE drive_file_id = $1", file_id)
-        .execute(&mut *tx)
+        // Remove the row we are about to replace (noop for new files; clears old data for re-ingest).
+        sqlx::query!("DELETE FROM games WHERE drive_file_id = $1", file_id)
+            .execute(&mut *tx)
+            .await?;
+
+        // Check for a duplicate by fingerprint. The self-delete above ensures we never match
+        // the row we just removed, so this can only find a genuinely different file.
+        let existing = sqlx::query!(
+            r#"SELECT drive_file_id, modified_time FROM games WHERE fingerprint = $1 ORDER BY modified_time DESC LIMIT 1"#,
+            &fingerprint_json,
+        )
+        .fetch_optional(&mut *tx)
         .await?;
 
-    // Check for a duplicate by fingerprint. The self-delete above ensures we never match
-    // the row we just removed, so this can only find a genuinely different file.
-    let existing = sqlx::query!(
-        r#"SELECT drive_file_id, modified_time FROM games WHERE fingerprint = $1 ORDER BY modified_time DESC LIMIT 1"#,
-        &fingerprint_json,
-    )
-    .fetch_optional(&mut *tx)
-    .await?;
-
-    if let Some(ref existing) = existing {
-        if existing.modified_time >= modified_time {
+        if let Some(ref existing) = existing {
+            if existing.modified_time >= modified_time {
+                info!(
+                    "duplicate game detected: skipping {} (existing {} has same or newer modified time)",
+                    file_id, existing.drive_file_id
+                );
+                tx.rollback().await?;
+                return Ok(());
+            }
             info!(
-                "duplicate game detected: skipping {} (existing {} has same or newer modified time)",
-                file_id, existing.drive_file_id
+                "duplicate game detected: replacing {} with {} (newer modified time)",
+                existing.drive_file_id, file_id
             );
-            // Roll back the self-delete above so the existing row we matched on
-            // (and any sibling row with the same drive_file_id, if this is a
-            // re-ingest path) is preserved.
-            tx.rollback().await?;
-            return Ok(());
-        }
-        info!(
-            "duplicate game detected: replacing {} with {} (newer modified time)",
-            existing.drive_file_id, file_id
-        );
-        sqlx::query!(
-            "DELETE FROM games WHERE drive_file_id = $1",
-            existing.drive_file_id
-        )
-        .execute(&mut *tx)
-        .await?;
-    }
-
-    sqlx::query!(
-        r#"INSERT INTO games
-           (drive_file_id, date, parser_version, version, tournament, host_league,
-            venue_name, venue_city, venue_state, periods, penalties,
-            modified_time, fingerprint)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"#,
-        file_id,
-        date,
-        parse::PARSER_VERSION,
-        game.version,
-        game.tournament,
-        game.host_league,
-        game.venue.name,
-        game.venue.city,
-        game.venue.state,
-        &periods,
-        &penalties,
-        modified_time,
-        &fingerprint_json,
-    )
-    .execute(&mut *tx)
-    .await?;
-
-    for (side_key, side) in [("home", &game.home), ("away", &game.away)] {
-        sqlx::query!(
-            "INSERT INTO game_sides (drive_file_id, side, league, team, color) VALUES ($1, $2, $3, $4, $5)",
-            file_id,
-            side_key,
-            side.league,
-            side.team,
-            side.color,
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        for skater in &side.skaters {
             sqlx::query!(
-                "INSERT INTO game_skaters (drive_file_id, side, number, name) VALUES ($1, $2, $3, $4)",
-                file_id,
-                side_key,
-                skater.number,
-                skater.name,
+                "DELETE FROM games WHERE drive_file_id = $1",
+                existing.drive_file_id
             )
             .execute(&mut *tx)
             .await?;
         }
-    }
 
-    if let Some(ref summary) = game.game_summary {
-        let home_stats = serde_json::to_value(&crate::models::SideStats {
-            players: summary.home_players.clone(),
-            totals: summary.home_totals.clone(),
-        })?;
-        let away_stats = serde_json::to_value(&crate::models::SideStats {
-            players: summary.away_players.clone(),
-            totals: summary.away_totals.clone(),
-        })?;
         sqlx::query!(
-            "INSERT INTO game_summary (drive_file_id, side, stats) VALUES ($1, 'home', $2)",
+            r#"INSERT INTO games
+               (drive_file_id, date, parser_version, version, tournament, host_league,
+                venue_name, venue_city, venue_state, periods, penalties,
+                modified_time, fingerprint)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"#,
             file_id,
-            &home_stats,
+            date,
+            parse::PARSER_VERSION,
+            game.version,
+            game.tournament,
+            game.host_league,
+            game.venue.name,
+            game.venue.city,
+            game.venue.state,
+            &periods,
+            &penalties,
+            modified_time,
+            &fingerprint_json,
         )
         .execute(&mut *tx)
         .await?;
-        sqlx::query!(
-            "INSERT INTO game_summary (drive_file_id, side, stats) VALUES ($1, 'away', $2)",
-            file_id,
-            &away_stats,
-        )
-        .execute(&mut *tx)
-        .await?;
-    }
 
-    tx.commit().await?;
-    Ok(())
+        for (side_key, side) in [("home", &game.home), ("away", &game.away)] {
+            sqlx::query!(
+                "INSERT INTO game_sides (drive_file_id, side, league, team, color) VALUES ($1, $2, $3, $4, $5)",
+                file_id,
+                side_key,
+                side.league,
+                side.team,
+                side.color,
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            for skater in &side.skaters {
+                sqlx::query!(
+                    "INSERT INTO game_skaters (drive_file_id, side, number, name) VALUES ($1, $2, $3, $4)",
+                    file_id,
+                    side_key,
+                    skater.number,
+                    skater.name,
+                )
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+
+        if let Some((ref home_stats, ref away_stats)) = home_stats {
+            sqlx::query!(
+                "INSERT INTO game_summary (drive_file_id, side, stats) VALUES ($1, 'home', $2)",
+                file_id,
+                home_stats,
+            )
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query!(
+                "INSERT INTO game_summary (drive_file_id, side, stats) VALUES ($1, 'away', $2)",
+                file_id,
+                away_stats,
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        match tx.commit().await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if is_retryable(&e) && attempt < 5 {
+                    attempt += 1;
+                    let delay = std::time::Duration::from_millis(100 * (1 << attempt));
+                    warn!(
+                        "retryable transaction error for {file_name}, attempt {attempt}/5, waiting {delay:?}: {e}"
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                return Err(e.into());
+            }
+        }
+    }
+}
+
+fn is_retryable(e: &sqlx::Error) -> bool {
+    if let sqlx::Error::Database(db_err) = e {
+        let code = db_err.code();
+        return code.as_deref() == Some("40001") // serialization_failure
+            || code.as_deref() == Some("CR000"); // crdb retry
+    }
+    false
 }
 
 async fn reingest_stale(pool: Arc<PgPool>, source: Arc<FileSource>) -> anyhow::Result<usize> {
