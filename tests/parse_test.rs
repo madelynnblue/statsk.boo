@@ -32,7 +32,15 @@ const FIXTURES: &[Fixture] = &[
         jam_counts: &[28, 25],
         star_pass_counts: &[5, 7],
         penalties: 26,
-        summary_players: (12, 12),
+        summary_players: (15, 15),
+    },
+    Fixture {
+        path: "BoulderCounty2026_vs_RockyMountain.xlsx",
+        period_count: 2,
+        jam_counts: &[24, 20],
+        star_pass_counts: &[4, 3],
+        penalties: 52,
+        summary_players: (16, 15),
     },
 ];
 

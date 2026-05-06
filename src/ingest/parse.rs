@@ -5,7 +5,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 5;
+pub const PARSER_VERSION: i64 = 6;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes)?;
@@ -452,10 +452,10 @@ fn parse_game_summary<R: std::io::Read + std::io::Seek>(
         .worksheet_range("Game Summary")
         .context("no Game Summary sheet")?;
     let formulas = wb.worksheet_formula("Game Summary").ok();
-    let home_players = (5u32..=19)
+    let home_players = (5u32..=24)
         .filter_map(|row| parse_summary_player(&sheet, &formulas, row, igrf))
         .collect();
-    let away_players = (27u32..=41)
+    let away_players = (27u32..=46)
         .filter_map(|row| parse_summary_player(&sheet, &formulas, row, igrf))
         .collect();
     Ok(GameSummary {
