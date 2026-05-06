@@ -48,8 +48,23 @@ fn cell_str(r: &Range<Data>, row: u32, col: u32) -> Option<String> {
                 Some(t.to_string())
             }
         }
-        Data::Float(_) | Data::Int(_) => data.as_string(),
+        Data::Int(v) => {
+            eprintln!("DEBUG cell_str Int at ({}, {}): {}", row, col, v);
+            Some(v.to_string())
+        }
+        Data::Float(v) => {
+            eprintln!("DEBUG cell_str Float at ({}, {}): {}", row, col, v);
+            Some(float_to_int_str(*v))
+        }
         _ => None,
+    }
+}
+
+fn float_to_int_str(v: f64) -> String {
+    if v.fract() == 0.0 && v.is_finite() {
+        (v as i64).to_string()
+    } else {
+        v.to_string()
     }
 }
 

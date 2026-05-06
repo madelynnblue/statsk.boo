@@ -2,6 +2,7 @@
 {% block title %}{{ game.home.team | default("Home") }} vs {{ game.away.team | default("Away") }}{% endblock %}
 {% block content %}
 <h1>{{ game.home.team | default("Home") }} vs {{ game.away.team | default("Away") }}</h1>
+<p><a href="https://drive.google.com/file/d/{{ file_id }}/view" target="_blank">View statsbook on Google Drive</a></p>
 <p>
   {{ date }}
   {% if game.venue.name %} · {{ game.venue.name }}{% endif %}
@@ -48,46 +49,70 @@
   <thead>
     <tr>
       <th>Jam</th>
-      <th colspan="4">{{ game.home.team | default("Home") }}</th>
-      <th colspan="4">{{ game.away.team | default("Away") }}</th>
+      <th colspan="5">{{ game.home.team | default("Home") }}</th>
+      <th colspan="5">{{ game.away.team | default("Away") }}</th>
     </tr>
     <tr>
       <th>#</th>
-      <th>Jammer</th><th>Lead</th><th>Pts</th><th>Lineup</th>
-      <th>Jammer</th><th>Lead</th><th>Pts</th><th>Lineup</th>
+      <th>Jammer</th><th>Lead</th><th>Pts</th><th>Pivot</th><th>Blockers</th>
+      <th>Jammer</th><th>Lead</th><th>Pts</th><th>Pivot</th><th>Blockers</th>
     </tr>
   </thead>
   <tbody>
   {% for jam in period.jams %}
     <tr>
       <td>{{ jam.number }}</td>
-      <td>{{ jam.home.jammer | default("-") }}</td>
+      <td>{{ home_names[jam.home.jammer] | default(jam.home.jammer | default("-")) }}</td>
       <td>{% if jam.home.lead %}L{% endif %}{% if jam.home.lost %}X{% endif %}{% if jam.home.called %}C{% endif %}</td>
       <td>{{ jam.home.score }}</td>
-      <td>{% for e in jam.home.lineup %}{{ e.number }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
-      <td>{{ jam.away.jammer | default("-") }}</td>
+      <td>{% for e in jam.home.lineup %}{% if e.position == "pivot" %}{{ home_names[e.number] | default(e.number) }}{% endif %}{% endfor %}</td>
+	      <td>{% for e in jam.home.lineup %}{% if e.position == "blocker" %}{{ home_names[e.number] | default(e.number) }}{% if not loop.last %}, {% endif %}{% endif %}{% endfor %}</td>
+      <td>{{ away_names[jam.away.jammer] | default(jam.away.jammer | default("-")) }}</td>
       <td>{% if jam.away.lead %}L{% endif %}{% if jam.away.lost %}X{% endif %}{% if jam.away.called %}C{% endif %}</td>
       <td>{{ jam.away.score }}</td>
-      <td>{% for e in jam.away.lineup %}{{ e.number }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+      <td>{% for e in jam.away.lineup %}{% if e.position == "pivot" %}{{ away_names[e.number] | default(e.number) }}{% endif %}{% endfor %}</td>
+	      <td>{% for e in jam.away.lineup %}{% if e.position == "blocker" %}{{ away_names[e.number] | default(e.number) }}{% if not loop.last %}, {% endif %}{% endif %}{% endfor %}</td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
 {% endfor %}
 
-{% if game.penalties %}
-<h2>Penalties</h2>
+{% if home_penalties %}
+<h2>Penalties · {{ game.home.team | default("Home") }}</h2>
 <table>
-  <thead><tr><th>Side</th><th>#</th><th>Period</th><th>Jam</th><th>Code</th><th>FO</th></tr></thead>
+  <thead><tr><th>#</th><th>Name</th><th>Total</th><th>Penalties</th></tr></thead>
   <tbody>
-  {% for p in game.penalties %}
+  {% for pp in home_penalties %}
     <tr>
-      <td>{{ p.side }}</td>
-      <td>{{ p.number }}</td>
-      <td>{{ p.period }}</td>
-      <td>{{ p.jam | default("-") }}</td>
-      <td>{{ p.code }}</td>
-      <td>{% if p.foul_out %}FO{% endif %}</td>
+      <td>{{ pp.number }}</td>
+      <td>{{ pp.name }}</td>
+      <td>{{ pp.total }}{% if pp.foul_out %} FO{% endif %}</td>
+      <td>
+        {% for p in pp.penalties %}
+          {{ p.code }} (P{{ p.period }}{% if p.jam %}, J{{ p.jam }}{% endif %}){% if not loop.last %}; {% endif %}
+        {% endfor %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% if away_penalties %}
+<h2>Penalties · {{ game.away.team | default("Away") }}</h2>
+<table>
+  <thead><tr><th>#</th><th>Name</th><th>Total</th><th>Penalties</th></tr></thead>
+  <tbody>
+  {% for pp in away_penalties %}
+    <tr>
+      <td>{{ pp.number }}</td>
+      <td>{{ pp.name }}</td>
+      <td>{{ pp.total }}{% if pp.foul_out %} FO{% endif %}</td>
+      <td>
+        {% for p in pp.penalties %}
+          {{ p.code }} (P{{ p.period }}{% if p.jam %}, J{{ p.jam }}{% endif %}){% if not loop.last %}; {% endif %}
+        {% endfor %}
+      </td>
     </tr>
   {% endfor %}
   </tbody>
