@@ -25,36 +25,17 @@ pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
     }
 }
 
-async fn game_count(pool: &PgPool) -> anyhow::Result<i64> {
-    let row = sqlx::query!("SELECT COUNT(*) as count FROM games")
-        .fetch_one(pool)
-        .await?;
-    Ok(row.count.unwrap_or(0))
-}
-
 async fn run_ingest(cfg: &Config, pool: &PgPool, client: &DriveClient) -> anyhow::Result<()> {
-    let count = game_count(pool).await?;
-    if count >= 10 {
-        info!("database has {count} games, skipping ingest (dev mode)");
-        return Ok(());
-    }
+    let last_ingest = last_ingest_at(pool)
+        .await?
+        .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::weeks(1));
 
-    let last_ingest = last_ingest_at(pool).await?;
-
-    let files = match last_ingest {
-        None => {
-            info!("first ingest run: listing all files");
-            client.list_all_xlsx(&cfg.google_drive_folder_id).await?
-        }
-        Some(ts) => {
-            let jitter = chrono::Duration::from_std(cfg.ingest_jitter).unwrap_or_default();
-            let since = (ts - jitter).to_rfc3339();
-            info!("incremental ingest since {since}");
-            client
-                .list_xlsx_since(&cfg.google_drive_folder_id, &since)
-                .await?
-        }
-    };
+    let jitter = chrono::Duration::from_std(cfg.ingest_jitter).unwrap_or_default();
+    let since = (last_ingest - jitter).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    info!("ingesting files since {since}");
+    let files = client
+        .list_xlsx_since(&cfg.google_drive_folder_id, &since)
+        .await?;
 
     info!("found {} candidate file(s)", files.len());
 
