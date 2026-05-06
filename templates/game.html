@@ -78,44 +78,29 @@
 </table>
 {% endfor %}
 
-{% if home_penalties %}
-<h2>Penalties · {{ game.home.team | default("Home") }}</h2>
-<table>
-  <thead><tr><th>#</th><th>Name</th><th>Total</th><th>Penalties</th></tr></thead>
-  <tbody>
-  {% for pp in home_penalties %}
-    <tr>
-      <td>{{ pp.number }}</td>
-      <td>{{ pp.name }}</td>
-      <td>{{ pp.total }}{% if pp.foul_out %} FO{% endif %}</td>
-      <td>
-        {% for p in pp.penalties %}
-          {{ p.code }} (P{{ p.period }}{% if p.jam %}, J{{ p.jam }}{% endif %}){% if not loop.last %}; {% endif %}
-        {% endfor %}
-      </td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% endif %}
-{% if away_penalties %}
-<h2>Penalties · {{ game.away.team | default("Away") }}</h2>
-<table>
-  <thead><tr><th>#</th><th>Name</th><th>Total</th><th>Penalties</th></tr></thead>
-  <tbody>
-  {% for pp in away_penalties %}
-    <tr>
-      <td>{{ pp.number }}</td>
-      <td>{{ pp.name }}</td>
-      <td>{{ pp.total }}{% if pp.foul_out %} FO{% endif %}</td>
-      <td>
-        {% for p in pp.penalties %}
-          {{ p.code }} (P{{ p.period }}{% if p.jam %}, J{{ p.jam }}{% endif %}){% if not loop.last %}; {% endif %}
-        {% endfor %}
-      </td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% endif %}
+{% macro penalties_table(team, penalties) %}
+  {% if penalties %}
+  <h2>Penalties · {{ team }}</h2>
+  <table>
+    <thead><tr><th>#</th><th>Name</th><th>Total</th><th>Penalties</th></tr></thead>
+    <tbody>
+    {% for pp in penalties %}
+      <tr>
+        <td>{{ pp.number }}</td>
+        <td>{{ pp.name }}</td>
+        <td>{{ pp.total }}{% if pp.foul_out %} FO{% endif %}</td>
+        <td>
+          {% for p in pp.penalties %}
+            {{ p.code }} (P{{ p.period }}{% if p.jam %}, J{{ p.jam }}{% endif %}){% if not loop.last %}; {% endif %}
+          {% endfor %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+{% endmacro %}
+
+{{ penalties_table(game.home.team | default("Home"), home_penalties) }}
+{{ penalties_table(game.away.team | default("Away"), away_penalties) }}
 {% endblock %}

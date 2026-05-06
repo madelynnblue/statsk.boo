@@ -27,15 +27,8 @@ pub async fn handle(
 
     let home_names = skater_name_map(&game, "home");
     let away_names = skater_name_map(&game, "away");
-    let player_penalties = group_penalties(&game.penalties, &home_names, &away_names);
-    let home_penalties: Vec<&PlayerPenalties> = player_penalties
-        .iter()
-        .filter(|p| p.side == "home")
-        .collect();
-    let away_penalties: Vec<&PlayerPenalties> = player_penalties
-        .iter()
-        .filter(|p| p.side == "away")
-        .collect();
+    let home_penalties = group_penalties(&game.penalties, "home", &home_names);
+    let away_penalties = group_penalties(&game.penalties, "away", &away_names);
 
     let tmpl = state.env.get_template("game.html")?;
     let html = tmpl.render(minijinja::context! {
@@ -45,7 +38,6 @@ pub async fn handle(
         game       => game,
         home_names,
         away_names,
-        player_penalties => player_penalties,
         home_penalties,
         away_penalties,
         file_id,
@@ -55,7 +47,6 @@ pub async fn handle(
 
 #[derive(Debug, Serialize)]
 struct PlayerPenalties {
-    side: String,
     number: String,
     name: String,
     total: usize,
@@ -72,19 +63,16 @@ struct PenaltyItem {
 
 fn group_penalties(
     penalties: &[Penalty],
-    home_names: &HashMap<String, String>,
-    away_names: &HashMap<String, String>,
+    side: &str,
+    names: &HashMap<String, String>,
 ) -> Vec<PlayerPenalties> {
-    let mut groups: HashMap<(String, String), Vec<&Penalty>> = HashMap::new();
-    for p in penalties {
-        groups
-            .entry((p.side.clone(), p.number.clone()))
-            .or_default()
-            .push(p);
+    let mut groups: HashMap<String, Vec<&Penalty>> = HashMap::new();
+    for p in penalties.iter().filter(|p| p.side == side) {
+        groups.entry(p.number.clone()).or_default().push(p);
     }
     let mut result: Vec<PlayerPenalties> = groups
         .into_iter()
-        .map(|((side, number), pens)| {
+        .map(|(number, pens)| {
             let foul_out = pens.iter().any(|p| p.foul_out);
             let total = pens.len();
             let penalty_items: Vec<PenaltyItem> = pens
@@ -95,18 +83,11 @@ fn group_penalties(
                     jam: p.jam,
                 })
                 .collect();
-            let name = match side.as_str() {
-                "home" => home_names
-                    .get(&number)
-                    .cloned()
-                    .unwrap_or_else(|| number.clone()),
-                _ => away_names
-                    .get(&number)
-                    .cloned()
-                    .unwrap_or_else(|| number.clone()),
-            };
+            let name = names
+                .get(&number)
+                .cloned()
+                .unwrap_or_else(|| number.clone());
             PlayerPenalties {
-                side,
                 number,
                 name,
                 total,
@@ -115,7 +96,7 @@ fn group_penalties(
             }
         })
         .collect();
-    result.sort_by(|a, b| a.side.cmp(&b.side).then(a.number.cmp(&b.number)));
+    result.sort_by(|a, b| a.number.cmp(&b.number));
     result
 }
 
