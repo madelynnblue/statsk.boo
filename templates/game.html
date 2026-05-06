@@ -74,12 +74,12 @@
   {% for jam in period.jams %}
     <tr>
       <td>{{ jam.number }}</td>
-      <td>{{ home_names[jam.home.jammer] | default(jam.home.jammer | default("-")) }}</td>
+      <td>{{ home_names[jam.home.jammer] | default(jam.home.jammer | default("-")) }}{% if jam.home.star_pass_jammer %} → {{ home_names[jam.home.star_pass_jammer] | default(jam.home.star_pass_jammer) }}{% endif %}</td>
       <td>{% if jam.home.lead %}L{% endif %}{% if jam.home.lost %}X{% endif %}{% if jam.home.called %}C{% endif %}</td>
       <td>{{ jam.home.score }}</td>
       <td>{% for e in jam.home.lineup %}{% if e.position == "pivot" %}{{ home_names[e.number] | default(e.number) }}{% endif %}{% endfor %}</td>
 	      <td>{% for e in jam.home.lineup %}{% if e.position == "blocker" %}{{ home_names[e.number] | default(e.number) }}{% if not loop.last %}, {% endif %}{% endif %}{% endfor %}</td>
-      <td>{{ away_names[jam.away.jammer] | default(jam.away.jammer | default("-")) }}</td>
+      <td>{{ away_names[jam.away.jammer] | default(jam.away.jammer | default("-")) }}{% if jam.away.star_pass_jammer %} → {{ away_names[jam.away.star_pass_jammer] | default(jam.away.star_pass_jammer) }}{% endif %}</td>
       <td>{% if jam.away.lead %}L{% endif %}{% if jam.away.lost %}X{% endif %}{% if jam.away.called %}C{% endif %}</td>
       <td>{{ jam.away.score }}</td>
       <td>{% for e in jam.away.lineup %}{% if e.position == "pivot" %}{{ away_names[e.number] | default(e.number) }}{% endif %}{% endfor %}</td>

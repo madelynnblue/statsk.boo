@@ -34,9 +34,17 @@ pub async fn handle(
     Query(params): Query<TeamParams>,
 ) -> Result<Html<String>, AppError> {
     let rows = sqlx::query!(
-        r#"SELECT drive_file_id, date, data::text as data_text FROM games
+        r#"SELECT drive_file_id as "drive_file_id!: String",
+                  date,
+                  data::text as "data_text!: String"
+           FROM games
            WHERE data @> jsonb_build_object('home', jsonb_build_object('league', $1::text, 'team', $2::text))
-              OR data @> jsonb_build_object('away', jsonb_build_object('league', $1::text, 'team', $2::text))
+           UNION ALL
+           SELECT drive_file_id as "drive_file_id!: String",
+                  date,
+                  data::text as "data_text!: String"
+           FROM games
+           WHERE data @> jsonb_build_object('away', jsonb_build_object('league', $1::text, 'team', $2::text))
            ORDER BY date DESC"#,
         params.league,
         params.team,
@@ -51,8 +59,7 @@ pub async fn handle(
     };
 
     for row in &rows {
-        let game: GameData = serde_json::from_str(row.data_text.as_deref().unwrap_or_default())
-            .map_err(anyhow::Error::from)?;
+        let game: GameData = serde_json::from_str(&row.data_text).map_err(anyhow::Error::from)?;
 
         let side = if game.home.league.as_deref() == Some(&params.league)
             && game.home.team.as_deref() == Some(&params.team)

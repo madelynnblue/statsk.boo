@@ -41,14 +41,22 @@ pub async fn handle(
     Query(params): Query<PlayerParams>,
 ) -> Result<Html<String>, AppError> {
     let rows = sqlx::query!(
-        r#"SELECT drive_file_id, date, data FROM games
+        r#"SELECT drive_file_id as "drive_file_id!: String",
+                  date,
+                  data as "data!: serde_json::Value"
+           FROM games
            WHERE data @> jsonb_build_object(
                'home', jsonb_build_object(
                    'league', $1::text,
                    'skaters', jsonb_build_array(jsonb_build_object('number', $3::text, 'name', $2::text))
                )
            )
-           OR data @> jsonb_build_object(
+           UNION ALL
+           SELECT drive_file_id as "drive_file_id!: String",
+                  date,
+                  data as "data!: serde_json::Value"
+           FROM games
+           WHERE data @> jsonb_build_object(
                'away', jsonb_build_object(
                    'league', $1::text,
                    'skaters', jsonb_build_array(jsonb_build_object('number', $3::text, 'name', $2::text))

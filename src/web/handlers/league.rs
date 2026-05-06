@@ -14,20 +14,17 @@ pub async fn handle(
 ) -> Result<Html<String>, AppError> {
     let rows = sqlx::query!(
         r#"SELECT data->'home'->>'team' as team FROM games
-           WHERE data->'home'->>'league' = $1
+           WHERE data @> jsonb_build_object('home', jsonb_build_object('league', $1::text))
            UNION
            SELECT data->'away'->>'team' as team FROM games
-           WHERE data->'away'->>'league' = $1
+           WHERE data @> jsonb_build_object('away', jsonb_build_object('league', $1::text))
            ORDER BY 1"#,
         params.league,
     )
     .fetch_all(&*state.pool)
     .await?;
 
-    let teams: Vec<String> = rows
-        .iter()
-        .filter_map(|r| r.team.clone())
-        .collect();
+    let teams: Vec<String> = rows.iter().filter_map(|r| r.team.clone()).collect();
 
     let tmpl = state.env.get_template("league.html")?;
     let html = tmpl.render(minijinja::context! {

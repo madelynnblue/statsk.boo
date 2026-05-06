@@ -1,0 +1,2 @@
+- [sqlx UNION nullability override](feedback_sqlx_union_nullability.md) — UNION ALL forces sqlx to infer Option; use `as "col!: Type"` instead of `unwrap_or_default()` on PK/NOT-NULL columns
+- [Parser version bumps for ingest re-parse](project_parser_version_bumps.md) — when a parse.rs diff includes parsing logic changes (not just denormalization columns), PARSER_VERSION must be bumped so reingest_stale picks up affected rows

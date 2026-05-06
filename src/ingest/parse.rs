@@ -5,7 +5,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 2;
+pub const PARSER_VERSION: i64 = 3;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes)?;
@@ -163,14 +163,39 @@ fn parse_scores<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Result<Ve
     let period_defs = [(1u8, 3u32, 0u32, 19u32), (2u8, 45u32, 0u32, 19u32)];
     for (period_num, start_row, home_col, away_col) in period_defs {
         let mut jams = Vec::new();
-        for i in 0..38u32 {
+        let mut i = 0u32;
+        while i < 38 {
             let row = start_row + i;
-            let jam_num = match cell_i16(&sheet, row, home_col) {
-                0 => break,
-                n => n as u16,
+            // SP rows between jams belong to the previous jam — the outer loop
+            // should never land on one. If we do, skip past it.
+            if matches!(sheet.get_value((row, home_col)), Some(Data::String(_))) {
+                i += 1;
+                continue;
+            }
+            let jam_num = match sheet.get_value((row, home_col)) {
+                Some(d) => match d.as_i64() {
+                    Some(0) | None => break,
+                    Some(n) => n as u16,
+                },
+                None => break,
             };
-            let home = parse_jam_side(&sheet, row, home_col);
-            let away = parse_jam_side(&sheet, row, away_col);
+            let mut home = parse_jam_side(&sheet, row, home_col);
+            let mut away = parse_jam_side(&sheet, row, away_col);
+            i += 1;
+            // The row immediately after a jam may be an SP row carrying a star
+            // pass jammer for one or both sides.
+            let sp_row = start_row + i;
+            let home_sp = matches!(sheet.get_value((sp_row, home_col)), Some(Data::String(_)));
+            let away_sp = matches!(sheet.get_value((sp_row, away_col)), Some(Data::String(_)));
+            if home_sp {
+                home.star_pass_jammer = cell_str(&sheet, sp_row, home_col + 1);
+            }
+            if away_sp {
+                away.star_pass_jammer = cell_str(&sheet, sp_row, away_col + 1);
+            }
+            if home_sp || away_sp {
+                i += 1;
+            }
             jams.push(Jam {
                 number: jam_num,
                 home,
@@ -199,6 +224,7 @@ fn parse_jam_side(sheet: &Range<Data>, row: u32, base_col: u32) -> JamSide {
         .sum();
     JamSide {
         jammer,
+        star_pass_jammer: None,
         lead,
         lost,
         called,
@@ -222,10 +248,15 @@ fn merge_lineups<R: std::io::Read + std::io::Seek>(
         let Some(period) = periods.get_mut(pi) else {
             continue;
         };
-        for (ji, jam) in period.jams.iter_mut().enumerate() {
-            let row = start_row + ji as u32;
+        let mut row = start_row;
+        for jam in period.jams.iter_mut() {
+            // Skip SP (star pass) rows in the Lineups sheet.
+            while let Some(Data::String(_)) = sheet.get_value((row, 0u32)) {
+                row += 1;
+            }
             jam.home.lineup = parse_lineup_side(&sheet, row, home_np_col);
             jam.away.lineup = parse_lineup_side(&sheet, row, away_np_col);
+            row += 1;
         }
     }
     Ok(())

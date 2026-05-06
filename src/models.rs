@@ -140,6 +140,7 @@ pub struct Jam {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct JamSide {
     pub jammer: Option<String>,
+    pub star_pass_jammer: Option<String>,
     pub lead: bool,
     pub lost: bool,
     pub called: bool,
@@ -206,6 +207,14 @@ impl GameData {
         .collect::<Vec<_>>()
         .join("\n")
     }
+
+    pub fn league_search_text(&self) -> String {
+        [self.home.league.as_deref(), self.away.league.as_deref()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 #[cfg(test)]
@@ -246,6 +255,7 @@ mod tests {
                     number: 1,
                     home: JamSide {
                         jammer: Some("9".into()),
+                        star_pass_jammer: None,
                         lead: true,
                         lost: false,
                         called: false,
@@ -256,6 +266,7 @@ mod tests {
                     },
                     away: JamSide {
                         jammer: Some("247".into()),
+                        star_pass_jammer: None,
                         lead: false,
                         lost: true,
                         called: false,

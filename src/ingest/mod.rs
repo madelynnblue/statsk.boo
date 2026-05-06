@@ -77,17 +77,12 @@ async fn process_file(
     Ok(true)
 }
 
-/// Downloads, parses, and inserts a game into the database.
-/// The executor can be a `&PgPool` or a transaction (`&mut PgConnection`).
-async fn insert_parsed_file<'e, E>(
-    executor: E,
+async fn insert_parsed_file(
+    pool: &PgPool,
     client: &DriveClient,
     file_id: &str,
     file_name: &str,
-) -> anyhow::Result<()>
-where
-    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
-{
+) -> anyhow::Result<()> {
     let bytes = client.download_file(file_id).await?;
     let (game, date) = parse::parse_statsbook_with_date(&bytes)
         .map_err(|e| anyhow::anyhow!("parse error in {file_name}: {e:#}"))?;
@@ -102,21 +97,30 @@ where
 
     let player_search = game.player_search_text();
     let team_search = game.team_search_text();
+    let league_search = game.league_search_text();
     let data = serde_json::to_value(&game)?;
 
     sqlx::query!(
         r#"INSERT INTO games
-           (drive_file_id, date, data, player_search, team_search, parser_version)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (drive_file_id) DO NOTHING"#,
+           (drive_file_id, date, data, player_search, team_search, league_search, parser_version)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (drive_file_id) DO UPDATE SET
+               date = EXCLUDED.date,
+               data = EXCLUDED.data,
+               player_search = EXCLUDED.player_search,
+               team_search = EXCLUDED.team_search,
+               league_search = EXCLUDED.league_search,
+               parser_version = EXCLUDED.parser_version,
+               ingested_at = NOW()"#,
         file_id,
         date,
         &data,
         &player_search,
         &team_search,
+        &league_search,
         parse::PARSER_VERSION,
     )
-    .execute(executor)
+    .execute(pool)
     .await?;
 
     Ok(())
@@ -156,11 +160,5 @@ async fn reingest_stale(pool: &PgPool, client: &DriveClient) -> anyhow::Result<u
 }
 
 async fn reingest_file(pool: &PgPool, client: &DriveClient, file_id: &str) -> anyhow::Result<()> {
-    let mut tx = pool.begin().await?;
-    sqlx::query!("DELETE FROM games WHERE drive_file_id = $1", file_id)
-        .execute(&mut *tx)
-        .await?;
-    insert_parsed_file(&mut *tx, client, file_id, file_id).await?;
-    tx.commit().await?;
-    Ok(())
+    insert_parsed_file(pool, client, file_id, file_id).await
 }

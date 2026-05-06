@@ -107,10 +107,10 @@ pub async fn handle(
 
         let league_rows = sqlx::query!(
             r#"SELECT DISTINCT data->'home'->>'league' as league FROM games
-               WHERE data->'home'->>'league' ILIKE $1
+               WHERE league_search ILIKE $1 AND data->'home'->>'league' ILIKE $1
                UNION
                SELECT DISTINCT data->'away'->>'league' as league FROM games
-               WHERE data->'away'->>'league' ILIKE $1
+               WHERE league_search ILIKE $1 AND data->'away'->>'league' ILIKE $1
                ORDER BY 1"#,
             &pattern,
         )
