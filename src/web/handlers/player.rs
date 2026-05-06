@@ -1,8 +1,8 @@
+use crate::models::GameData;
+use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
 use axum::response::Html;
 use serde::{Deserialize, Serialize};
-use crate::models::GameData;
-use crate::web::{AppState, error::AppError};
 
 #[derive(Deserialize)]
 pub struct PlayerParams {
@@ -57,21 +57,40 @@ pub async fn handle(
     .fetch_all(&*state.pool).await?;
 
     let mut game_rows: Vec<GameRow> = Vec::new();
-    let mut career = CareerStats { games: 0, jams_as_jammer: 0, points_as_jammer: 0, total_penalties: 0 };
+    let mut career = CareerStats {
+        games: 0,
+        jams_as_jammer: 0,
+        points_as_jammer: 0,
+        total_penalties: 0,
+    };
 
     for row in &rows {
-        let game: GameData = serde_json::from_value(row.data.clone())
-            .map_err(anyhow::Error::from)?;
+        let game: GameData =
+            serde_json::from_value(row.data.clone()).map_err(anyhow::Error::from)?;
 
         let side = if game.home.league.as_deref() == Some(&params.league)
-            && game.home.skaters.iter().any(|s| s.number == params.number && s.name == params.name)
-        { "home" } else { "away" };
+            && game
+                .home
+                .skaters
+                .iter()
+                .any(|s| s.number == params.number && s.name == params.name)
+        {
+            "home"
+        } else {
+            "away"
+        };
 
-        let opponent = if side == "home" { &game.away } else { &game.home };
-        let opponent_team   = opponent.team.clone().unwrap_or_default();
+        let opponent = if side == "home" {
+            &game.away
+        } else {
+            &game.home
+        };
+        let opponent_team = opponent.team.clone().unwrap_or_default();
         let opponent_league = opponent.league.clone().unwrap_or_default();
 
-        let jams_as_jammer = game.periods.iter()
+        let jams_as_jammer = game
+            .periods
+            .iter()
             .flat_map(|p| &p.jams)
             .filter(|j| {
                 let js = if side == "home" { &j.home } else { &j.away };
@@ -79,16 +98,26 @@ pub async fn handle(
             })
             .count() as u16;
 
-        let points_as_jammer: i16 = game.periods.iter()
+        let points_as_jammer: i16 = game
+            .periods
+            .iter()
             .flat_map(|p| &p.jams)
             .filter(|j| {
                 let js = if side == "home" { &j.home } else { &j.away };
                 js.jammer.as_deref() == Some(&params.number)
             })
-            .map(|j| if side == "home" { j.home.score } else { j.away.score })
+            .map(|j| {
+                if side == "home" {
+                    j.home.score
+                } else {
+                    j.away.score
+                }
+            })
             .sum();
 
-        let penalties = game.penalties.iter()
+        let penalties = game
+            .penalties
+            .iter()
             .filter(|p| p.side == side && p.number == params.number)
             .count();
 

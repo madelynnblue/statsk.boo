@@ -1,7 +1,7 @@
-use axum::extract::State;
-use axum::response::Html;
 use crate::models::GameData;
 use crate::web::{AppState, error::AppError};
+use axum::extract::State;
+use axum::response::Html;
 
 pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppError> {
     let rows = sqlx::query!(
@@ -9,7 +9,8 @@ pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppEr
            data->'home'->>'team' as home_team, data->'away'->>'team' as away_team
            FROM games ORDER BY date DESC NULLS LAST, ingested_at DESC LIMIT 10"#,
     )
-    .fetch_all(&*state.pool).await?;
+    .fetch_all(&*state.pool)
+    .await?;
 
     let mut games: Vec<RecentGame> = Vec::new();
     for r in &rows {

@@ -1,5 +1,5 @@
-use axum::response::{IntoResponse, Response};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 
 #[derive(thiserror::Error, Debug)]
 pub enum AppError {
@@ -27,7 +27,10 @@ impl IntoResponse for AppError {
         let (status, body) = match &self {
             AppError::Internal(e) => {
                 tracing::error!("{e:#}");
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal error".to_string(),
+                )
             }
             AppError::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
         };

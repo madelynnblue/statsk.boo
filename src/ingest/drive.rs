@@ -24,7 +24,10 @@ pub struct DriveClient {
 
 impl DriveClient {
     pub fn new(api_key: String) -> Self {
-        Self { client: Client::new(), api_key }
+        Self {
+            client: Client::new(),
+            api_key,
+        }
     }
 
     pub async fn list_all_xlsx(&self, folder_id: &str) -> Result<Vec<DriveFile>> {
@@ -42,7 +45,10 @@ impl DriveClient {
     pub async fn list_xlsx_since(&self, folder_id: &str, since: &str) -> Result<Vec<DriveFile>> {
         let files = self.list_items(folder_id, false, Some(since)).await?;
         let subfolders = self.list_items(folder_id, true, None).await?;
-        let mut all: Vec<DriveFile> = files.into_iter().filter(|f| f.name.ends_with(".xlsx")).collect();
+        let mut all: Vec<DriveFile> = files
+            .into_iter()
+            .filter(|f| f.name.ends_with(".xlsx"))
+            .collect();
         for folder in subfolders {
             let files = self.list_items(&folder.id, false, Some(since)).await?;
             all.extend(files.into_iter().filter(|f| f.name.ends_with(".xlsx")));
@@ -50,7 +56,12 @@ impl DriveClient {
         Ok(all)
     }
 
-    async fn list_items(&self, folder_id: &str, folders_only: bool, since: Option<&str>) -> Result<Vec<DriveFile>> {
+    async fn list_items(
+        &self,
+        folder_id: &str,
+        folders_only: bool,
+        since: Option<&str>,
+    ) -> Result<Vec<DriveFile>> {
         let mime = if folders_only {
             "mimeType = 'application/vnd.google-apps.folder'"
         } else {
@@ -65,7 +76,8 @@ impl DriveClient {
         let mut page_token: Option<String> = None;
 
         loop {
-            let mut req = self.client
+            let mut req = self
+                .client
                 .get("https://www.googleapis.com/drive/v3/files")
                 .query(&[
                     ("q", q.as_str()),
@@ -76,9 +88,13 @@ impl DriveClient {
             if let Some(token) = &page_token {
                 req = req.query(&[("pageToken", token.as_str())]);
             }
-            let resp: FileList = req.send().await?.error_for_status()
+            let resp: FileList = req
+                .send()
+                .await?
+                .error_for_status()
                 .context("Drive API error")?
-                .json().await?;
+                .json()
+                .await?;
             all_files.extend(resp.files);
             match resp.next_page_token {
                 Some(t) => page_token = Some(t),
@@ -89,20 +105,25 @@ impl DriveClient {
     }
 
     pub async fn download_file(&self, file_id: &str) -> Result<Vec<u8>> {
-        let bytes = self.client
-            .get(format!("https://www.googleapis.com/drive/v3/files/{file_id}"))
+        let bytes = self
+            .client
+            .get(format!(
+                "https://www.googleapis.com/drive/v3/files/{file_id}"
+            ))
             .query(&[("alt", "media"), ("key", &self.api_key)])
-            .send().await?
+            .send()
+            .await?
             .error_for_status()
             .context("Drive download error")?
-            .bytes().await?;
+            .bytes()
+            .await?;
         Ok(bytes.to_vec())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    
+
     #[test]
     fn test_since_clause_format() {
         let since = "2024-01-01T00:00:00Z";

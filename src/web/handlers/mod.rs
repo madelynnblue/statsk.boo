@@ -1,5 +1,5 @@
-pub mod index;
-pub mod search;
-pub mod player;
-pub mod team;
 pub mod game;
+pub mod index;
+pub mod player;
+pub mod search;
+pub mod team;

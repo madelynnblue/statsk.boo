@@ -78,13 +78,24 @@ pub struct Penalty {
 
 impl GameData {
     pub fn total_score(&self, side: &str) -> i16 {
-        self.periods.iter().flat_map(|p| &p.jams).map(|j| {
-            if side == "home" { j.home.score } else { j.away.score }
-        }).sum()
+        self.periods
+            .iter()
+            .flat_map(|p| &p.jams)
+            .map(|j| {
+                if side == "home" {
+                    j.home.score
+                } else {
+                    j.away.score
+                }
+            })
+            .sum()
     }
 
     pub fn player_search_text(&self) -> String {
-        let mut names: Vec<&str> = self.home.skaters.iter()
+        let mut names: Vec<&str> = self
+            .home
+            .skaters
+            .iter()
             .chain(self.away.skaters.iter())
             .map(|s| s.name.as_str())
             .collect();
@@ -113,27 +124,55 @@ mod tests {
     fn sample_game() -> GameData {
         GameData {
             version: "2024".into(),
-            venue: Venue { name: Some("Test Arena".into()), city: None, state: None },
+            venue: Venue {
+                name: Some("Test Arena".into()),
+                city: None,
+                state: None,
+            },
             tournament: None,
             host_league: None,
             home: TeamData {
                 league: Some("Gotham Girls Roller Derby".into()),
                 team: Some("Gotham Girls All Stars".into()),
                 color: Some("Black".into()),
-                skaters: vec![Skater { number: "9".into(), name: "Bonnie Thunders".into() }],
+                skaters: vec![Skater {
+                    number: "9".into(),
+                    name: "Bonnie Thunders".into(),
+                }],
             },
             away: TeamData {
                 league: Some("Rose City".into()),
                 team: Some("Rose City Rollers".into()),
                 color: Some("Red".into()),
-                skaters: vec![Skater { number: "247".into(), name: "Atomatrix".into() }],
+                skaters: vec![Skater {
+                    number: "247".into(),
+                    name: "Atomatrix".into(),
+                }],
             },
             periods: vec![Period {
                 number: 1,
                 jams: vec![Jam {
                     number: 1,
-                    home: JamSide { jammer: Some("9".into()), lead: true, lost: false, called: false, injury: false, no_pivot: false, score: 4, lineup: vec![] },
-                    away: JamSide { jammer: Some("247".into()), lead: false, lost: true, called: false, injury: false, no_pivot: false, score: 0, lineup: vec![] },
+                    home: JamSide {
+                        jammer: Some("9".into()),
+                        lead: true,
+                        lost: false,
+                        called: false,
+                        injury: false,
+                        no_pivot: false,
+                        score: 4,
+                        lineup: vec![],
+                    },
+                    away: JamSide {
+                        jammer: Some("247".into()),
+                        lead: false,
+                        lost: true,
+                        called: false,
+                        injury: false,
+                        no_pivot: false,
+                        score: 0,
+                        lineup: vec![],
+                    },
                 }],
             }],
             penalties: vec![],

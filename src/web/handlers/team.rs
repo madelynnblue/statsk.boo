@@ -1,8 +1,8 @@
+use crate::models::GameData;
+use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
 use axum::response::Html;
 use serde::{Deserialize, Serialize};
-use crate::models::GameData;
-use crate::web::{AppState, error::AppError};
 
 #[derive(Deserialize)]
 pub struct TeamParams {
@@ -44,7 +44,11 @@ pub async fn handle(
     .fetch_all(&*state.pool).await?;
 
     let mut game_rows: Vec<GameRow> = Vec::new();
-    let mut record = Record { wins: 0, losses: 0, ties: 0 };
+    let mut record = Record {
+        wins: 0,
+        losses: 0,
+        ties: 0,
+    };
 
     for row in &rows {
         let game: GameData = serde_json::from_str(row.data_text.as_deref().unwrap_or_default())
@@ -52,7 +56,11 @@ pub async fn handle(
 
         let side = if game.home.league.as_deref() == Some(&params.league)
             && game.home.team.as_deref() == Some(&params.team)
-        { "home" } else { "away" };
+        {
+            "home"
+        } else {
+            "away"
+        };
 
         let home_score = game.total_score("home");
         let away_score = game.total_score("away");
@@ -64,12 +72,25 @@ pub async fn handle(
         };
 
         let result = match our_score.cmp(&their_score) {
-            std::cmp::Ordering::Greater => { record.wins += 1; "W" }
-            std::cmp::Ordering::Less    => { record.losses += 1; "L" }
-            std::cmp::Ordering::Equal   => { record.ties += 1; "T" }
+            std::cmp::Ordering::Greater => {
+                record.wins += 1;
+                "W"
+            }
+            std::cmp::Ordering::Less => {
+                record.losses += 1;
+                "L"
+            }
+            std::cmp::Ordering::Equal => {
+                record.ties += 1;
+                "T"
+            }
         };
 
-        let opponent = if side == "home" { &game.away } else { &game.home };
+        let opponent = if side == "home" {
+            &game.away
+        } else {
+            &game.home
+        };
 
         game_rows.push(GameRow {
             drive_file_id: row.drive_file_id.clone(),

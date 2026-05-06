@@ -8,12 +8,9 @@ pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     Ok(game)
 }
 
-pub fn parse_statsbook_with_date(
-    bytes: &[u8],
-) -> Result<(GameData, Option<chrono::NaiveDate>)> {
+pub fn parse_statsbook_with_date(bytes: &[u8]) -> Result<(GameData, Option<chrono::NaiveDate>)> {
     let cursor = Cursor::new(bytes);
-    let mut wb: Xlsx<_> =
-        open_workbook_from_rs(cursor).context("failed to open xlsx workbook")?;
+    let mut wb: Xlsx<_> = open_workbook_from_rs(cursor).context("failed to open xlsx workbook")?;
 
     let version = parse_version(&mut wb);
     let venue = parse_venue(&mut wb)?;
@@ -85,9 +82,10 @@ fn cell_i16(r: &Range<Data>, row: u32, col: u32) -> i16 {
 fn parse_version<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> String {
     if let Ok(sheet) = wb.worksheet_range("Read Me") {
         if let Some(v) = cell_str(&sheet, 2, 0) {
-            if let Some(m) = v.split_whitespace().find(|s| {
-                s.len() == 4 && s.chars().all(|c| c.is_ascii_digit())
-            }) {
+            if let Some(m) = v
+                .split_whitespace()
+                .find(|s| s.len() == 4 && s.chars().all(|c| c.is_ascii_digit()))
+            {
                 return m.to_string();
             }
             return v;
@@ -107,17 +105,11 @@ fn parse_venue<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Result<Ven
 
 fn parse_igrf_meta<R: std::io::Read + std::io::Seek>(
     wb: &mut Xlsx<R>,
-) -> Result<(
-    Option<String>,
-    Option<String>,
-    Option<chrono::NaiveDate>,
-)> {
+) -> Result<(Option<String>, Option<String>, Option<chrono::NaiveDate>)> {
     let sheet = wb.worksheet_range("IGRF").context("no IGRF sheet")?;
     let tournament = cell_str(&sheet, 4, 1);
     let host_league = cell_str(&sheet, 4, 8);
-    let date = sheet
-        .get_value((6, 1))
-        .and_then(|d| d.as_date());
+    let date = sheet.get_value((6, 1)).and_then(|d| d.as_date());
     Ok((tournament, host_league, date))
 }
 
@@ -153,15 +145,10 @@ fn parse_team<R: std::io::Read + std::io::Seek>(
     })
 }
 
-fn parse_scores<R: std::io::Read + std::io::Seek>(
-    wb: &mut Xlsx<R>,
-) -> Result<Vec<Period>> {
+fn parse_scores<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Result<Vec<Period>> {
     let sheet = wb.worksheet_range("Score").context("no Score sheet")?;
     let mut periods = Vec::new();
-    let period_defs = [
-        (1u8, 3u32, 0u32, 19u32),
-        (2u8, 45u32, 0u32, 19u32),
-    ];
+    let period_defs = [(1u8, 3u32, 0u32, 19u32), (2u8, 45u32, 0u32, 19u32)];
     for (period_num, start_row, home_col, away_col) in period_defs {
         let mut jams = Vec::new();
         for i in 0..38u32 {
@@ -195,7 +182,9 @@ fn parse_jam_side(sheet: &Range<Data>, row: u32, base_col: u32) -> JamSide {
     let called = cell_bool(sheet, row, base_col + 4);
     let injury = cell_bool(sheet, row, base_col + 5);
     let no_pivot = cell_bool(sheet, row, base_col + 6);
-    let score: i16 = (7..=15u32).map(|c| cell_i16(sheet, row, base_col + c)).sum();
+    let score: i16 = (7..=15u32)
+        .map(|c| cell_i16(sheet, row, base_col + c))
+        .sum();
     JamSide {
         jammer,
         lead,
@@ -216,10 +205,7 @@ fn merge_lineups<R: std::io::Read + std::io::Seek>(
         Ok(s) => s,
         Err(_) => return Ok(()),
     };
-    let defs = [
-        (0usize, 3u32, 1u32, 27u32),
-        (1usize, 45u32, 1u32, 27u32),
-    ];
+    let defs = [(0usize, 3u32, 1u32, 27u32), (1usize, 45u32, 1u32, 27u32)];
     for (pi, start_row, home_np_col, away_np_col) in defs {
         let Some(period) = periods.get_mut(pi) else {
             continue;
@@ -233,11 +219,7 @@ fn merge_lineups<R: std::io::Read + std::io::Seek>(
     Ok(())
 }
 
-fn parse_lineup_side(
-    sheet: &Range<Data>,
-    row: u32,
-    no_pivot_col: u32,
-) -> Vec<LineupEntry> {
+fn parse_lineup_side(sheet: &Range<Data>, row: u32, no_pivot_col: u32) -> Vec<LineupEntry> {
     let jammer_col = no_pivot_col + 1;
     let positions = [
         (jammer_col, "jammer"),
@@ -262,9 +244,7 @@ fn parse_lineup_side(
         .collect()
 }
 
-fn parse_penalties<R: std::io::Read + std::io::Seek>(
-    wb: &mut Xlsx<R>,
-) -> Result<Vec<Penalty>> {
+fn parse_penalties<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Result<Vec<Penalty>> {
     let sheet = match wb.worksheet_range("Penalties") {
         Ok(s) => s,
         Err(_) => return Ok(vec![]),

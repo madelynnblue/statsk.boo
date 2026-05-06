@@ -1,11 +1,11 @@
 pub mod error;
 pub mod handlers;
 
-use std::sync::Arc;
+use crate::config::Config;
 use axum::{Router, routing::get};
 use minijinja::Environment;
 use sqlx::PgPool;
-use crate::config::Config;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -34,11 +34,17 @@ pub async fn serve(cfg: Arc<Config>, pool: Arc<PgPool>) -> anyhow::Result<()> {
 
 fn build_template_env() -> Environment<'static> {
     let mut env = Environment::new();
-    env.add_template("base.html",   include_str!("../../templates/base.html")).unwrap();
-    env.add_template("index.html",  include_str!("../../templates/index.html")).unwrap();
-    env.add_template("search.html", include_str!("../../templates/search.html")).unwrap();
-    env.add_template("player.html", include_str!("../../templates/player.html")).unwrap();
-    env.add_template("team.html",   include_str!("../../templates/team.html")).unwrap();
-    env.add_template("game.html",   include_str!("../../templates/game.html")).unwrap();
+    env.add_template("base.html", include_str!("../../templates/base.html"))
+        .unwrap();
+    env.add_template("index.html", include_str!("../../templates/index.html"))
+        .unwrap();
+    env.add_template("search.html", include_str!("../../templates/search.html"))
+        .unwrap();
+    env.add_template("player.html", include_str!("../../templates/player.html"))
+        .unwrap();
+    env.add_template("team.html", include_str!("../../templates/team.html"))
+        .unwrap();
+    env.add_template("game.html", include_str!("../../templates/game.html"))
+        .unwrap();
     env
 }

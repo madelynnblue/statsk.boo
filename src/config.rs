@@ -1,5 +1,5 @@
-use std::time::Duration;
 use anyhow::{Context, Result};
+use std::time::Duration;
 
 pub struct Config {
     pub database_url: String,
@@ -26,8 +26,7 @@ impl Config {
 
 fn parse_duration(var: &str, default: &str) -> Result<Duration> {
     let s = std::env::var(var).unwrap_or_else(|_| default.into());
-    humantime::parse_duration(&s)
-        .with_context(|| format!("invalid duration in {var}: {s}"))
+    humantime::parse_duration(&s).with_context(|| format!("invalid duration in {var}: {s}"))
 }
 
 #[cfg(test)]
@@ -48,6 +47,6 @@ mod tests {
         let cfg = Config::from_env().unwrap();
         assert_eq!(cfg.bind_addr, "0.0.0.0:8080");
         assert_eq!(cfg.ingest_interval.as_secs(), 86400); // 24h
-        assert_eq!(cfg.ingest_jitter.as_secs(), 3600);    // 1h
+        assert_eq!(cfg.ingest_jitter.as_secs(), 3600); // 1h
     }
 }

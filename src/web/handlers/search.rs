@@ -1,9 +1,9 @@
+use crate::models::GameData;
+use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
 use axum::response::Html;
 use serde::Deserialize;
 use std::collections::HashSet;
-use crate::models::GameData;
-use crate::web::{AppState, error::AppError};
 
 #[derive(Deserialize)]
 pub struct SearchParams {
@@ -38,17 +38,18 @@ pub async fn handle(
             "SELECT data FROM games WHERE player_search ILIKE $1 ORDER BY date DESC LIMIT 200",
             &pattern,
         )
-        .fetch_all(&*state.pool).await?;
+        .fetch_all(&*state.pool)
+        .await?;
 
         let mut seen_players: HashSet<(String, String, String)> = HashSet::new();
         let mut players: Vec<PlayerResult> = Vec::new();
 
         for row in &rows {
-            let game: GameData = serde_json::from_value(row.data.clone())
-                .map_err(anyhow::Error::from)?;
+            let game: GameData =
+                serde_json::from_value(row.data.clone()).map_err(anyhow::Error::from)?;
             for side_data in [&game.home, &game.away] {
                 let league = side_data.league.clone().unwrap_or_default();
-                let team   = side_data.team.clone().unwrap_or_default();
+                let team = side_data.team.clone().unwrap_or_default();
                 for skater in &side_data.skaters {
                     if skater.name.to_lowercase().contains(&q_lower) {
                         let key = (league.clone(), skater.name.clone(), skater.number.clone());
@@ -69,17 +70,18 @@ pub async fn handle(
             "SELECT data FROM games WHERE team_search ILIKE $1 ORDER BY date DESC LIMIT 200",
             &pattern,
         )
-        .fetch_all(&*state.pool).await?;
+        .fetch_all(&*state.pool)
+        .await?;
 
         let mut seen_teams: HashSet<(String, String)> = HashSet::new();
         let mut teams: Vec<TeamResult> = Vec::new();
 
         for row in &team_rows {
-            let game: GameData = serde_json::from_value(row.data.clone())
-                .map_err(anyhow::Error::from)?;
+            let game: GameData =
+                serde_json::from_value(row.data.clone()).map_err(anyhow::Error::from)?;
             for side_data in [&game.home, &game.away] {
                 let league = side_data.league.clone().unwrap_or_default();
-                let team   = side_data.team.clone().unwrap_or_default();
+                let team = side_data.team.clone().unwrap_or_default();
                 let name_matches = league.to_lowercase().contains(&q_lower)
                     || team.to_lowercase().contains(&q_lower);
                 if name_matches {

@@ -1,10 +1,10 @@
 pub mod drive;
 pub mod parse;
 
-use std::sync::Arc;
-use sqlx::PgPool;
 use crate::config::Config;
 use drive::DriveClient;
+use sqlx::PgPool;
+use std::sync::Arc;
 use tracing::{error, info, warn};
 
 pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
@@ -20,7 +20,8 @@ pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
 
 async fn game_count(pool: &PgPool) -> anyhow::Result<i64> {
     let row = sqlx::query!("SELECT COUNT(*) as count FROM games")
-        .fetch_one(pool).await?;
+        .fetch_one(pool)
+        .await?;
     Ok(row.count.unwrap_or(0))
 }
 
@@ -42,7 +43,9 @@ async fn run_ingest(cfg: &Config, pool: &PgPool, client: &DriveClient) -> anyhow
             let jitter = chrono::Duration::from_std(cfg.ingest_jitter).unwrap_or_default();
             let since = (ts - jitter).to_rfc3339();
             info!("incremental ingest since {since}");
-            client.list_xlsx_since(&cfg.google_drive_folder_id, &since).await?
+            client
+                .list_xlsx_since(&cfg.google_drive_folder_id, &since)
+                .await?
         }
     };
 
@@ -51,9 +54,9 @@ async fn run_ingest(cfg: &Config, pool: &PgPool, client: &DriveClient) -> anyhow
     for file in files {
         info!("ingesting {}", file.name);
         match process_file(pool, client, &file.id, &file.name).await {
-            Ok(true)  => info!("ingested {}", file.name),
+            Ok(true) => info!("ingested {}", file.name),
             Ok(false) => info!("skipped {} (already present)", file.name),
-            Err(e)    => warn!("skipping {}: {e:#}", file.name),
+            Err(e) => warn!("skipping {}: {e:#}", file.name),
         }
     }
     Ok(())
@@ -61,7 +64,8 @@ async fn run_ingest(cfg: &Config, pool: &PgPool, client: &DriveClient) -> anyhow
 
 async fn last_ingest_at(pool: &PgPool) -> anyhow::Result<Option<chrono::DateTime<chrono::Utc>>> {
     let row = sqlx::query!("SELECT MAX(ingested_at) as ts FROM games")
-        .fetch_one(pool).await?;
+        .fetch_one(pool)
+        .await?;
     Ok(row.ts)
 }
 
@@ -71,8 +75,12 @@ async fn process_file(
     file_id: &str,
     file_name: &str,
 ) -> anyhow::Result<bool> {
-    let row = sqlx::query!("SELECT COUNT(*) as count FROM games WHERE drive_file_id = $1", file_id)
-        .fetch_one(pool).await?;
+    let row = sqlx::query!(
+        "SELECT COUNT(*) as count FROM games WHERE drive_file_id = $1",
+        file_id
+    )
+    .fetch_one(pool)
+    .await?;
     if row.count.unwrap_or(0) > 0 {
         return Ok(false);
     }
@@ -96,7 +104,8 @@ async fn process_file(
         &player_search,
         &team_search,
     )
-    .execute(pool).await?;
+    .execute(pool)
+    .await?;
 
     Ok(true)
 }

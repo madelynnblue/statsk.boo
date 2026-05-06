@@ -2,8 +2,7 @@
 fn test_parse_testsheet() {
     let bytes = std::fs::read("tests/fixtures/TestSheet.xlsx")
         .expect("download tests/fixtures/TestSheet.xlsx first");
-    let game = wsb::ingest::parse::parse_statsbook(&bytes)
-        .expect("parse failed");
+    let game = wsb::ingest::parse::parse_statsbook(&bytes).expect("parse failed");
 
     // Basic sanity: both sides should have skaters
     assert!(!game.home.skaters.is_empty(), "home roster is empty");
