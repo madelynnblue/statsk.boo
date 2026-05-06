@@ -170,51 +170,29 @@ pub struct Penalty {
 
 impl GameData {
     pub fn total_score(&self, side: &str) -> i16 {
-        self.periods
-            .iter()
-            .flat_map(|p| &p.jams)
-            .map(|j| {
-                if side == "home" {
-                    j.home.score
-                } else {
-                    j.away.score
-                }
-            })
-            .sum()
+        periods_score(&self.periods, side)
     }
+}
 
-    pub fn player_search_text(&self) -> String {
-        let mut names: Vec<&str> = self
-            .home
-            .skaters
-            .iter()
-            .chain(self.away.skaters.iter())
-            .map(|s| s.name.as_str())
-            .collect();
-        names.dedup();
-        names.join("\n")
-    }
+pub fn periods_score(periods: &[Period], side: &str) -> i16 {
+    periods
+        .iter()
+        .flat_map(|p| &p.jams)
+        .map(|j| {
+            if side == "home" {
+                j.home.score
+            } else {
+                j.away.score
+            }
+        })
+        .sum()
+}
 
-    pub fn team_search_text(&self) -> String {
-        [
-            self.home.league.as_deref(),
-            self.home.team.as_deref(),
-            self.away.league.as_deref(),
-            self.away.team.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join("\n")
-    }
-
-    pub fn league_search_text(&self) -> String {
-        [self.home.league.as_deref(), self.away.league.as_deref()]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
+/// Serialization shim for game_summary stats JSONB.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SideStats {
+    pub players: Vec<SummaryPlayer>,
+    pub totals: SummaryTotals,
 }
 
 #[cfg(test)]
@@ -295,22 +273,5 @@ mod tests {
         let game = sample_game();
         assert_eq!(game.total_score("home"), 4);
         assert_eq!(game.total_score("away"), 0);
-    }
-
-    #[test]
-    fn test_player_search_text() {
-        let game = sample_game();
-        let text = game.player_search_text();
-        assert!(text.contains("Bonnie Thunders"));
-        assert!(text.contains("Atomatrix"));
-    }
-
-    #[test]
-    fn test_team_search_text() {
-        let game = sample_game();
-        let text = game.team_search_text();
-        assert!(text.contains("Gotham Girls Roller Derby"));
-        assert!(text.contains("Gotham Girls All Stars"));
-        assert!(text.contains("Rose City"));
     }
 }

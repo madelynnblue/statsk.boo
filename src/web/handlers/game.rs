@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::models::{GameData, Penalty};
+use crate::models::{GameData, GameSummary, Penalty, SideStats, Skater, TeamData, Venue};
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Path, State};
 use axum::response::Html;
@@ -12,15 +12,106 @@ pub async fn handle(
 ) -> Result<Html<String>, AppError> {
     let file_id = drive_file_id.clone();
     let row = sqlx::query!(
-        "SELECT date, data::text as data_text FROM games WHERE drive_file_id = $1",
+        r#"SELECT date, version, tournament, host_league,
+                  venue_name, venue_city, venue_state,
+                  periods, penalties
+           FROM games WHERE drive_file_id = $1"#,
         drive_file_id,
     )
     .fetch_optional(&*state.pool)
     .await?
     .ok_or(AppError::NotFound)?;
 
-    let game: GameData = serde_json::from_str(row.data_text.as_deref().unwrap_or_default())
-        .map_err(anyhow::Error::from)?;
+    let side_rows = sqlx::query!(
+        r#"SELECT side as "side!: String", league, team, color
+           FROM game_sides WHERE drive_file_id = $1"#,
+        drive_file_id,
+    )
+    .fetch_all(&*state.pool)
+    .await?;
+    if side_rows.len() != 2 {
+        return Err(AppError::NotFound);
+    }
+
+    let skater_rows = sqlx::query!(
+        r#"SELECT side as "side!: String", number, name
+           FROM game_skaters WHERE drive_file_id = $1"#,
+        drive_file_id,
+    )
+    .fetch_all(&*state.pool)
+    .await?;
+
+    let summary_rows = sqlx::query!(
+        r#"SELECT side as "side!: String", stats
+           FROM game_summary WHERE drive_file_id = $1"#,
+        drive_file_id,
+    )
+    .fetch_all(&*state.pool)
+    .await?;
+
+    let home_side = side_rows.iter().find(|s| s.side == "home").expect("game must have home side");
+    let away_side = side_rows.iter().find(|s| s.side == "away").expect("game must have away side");
+
+    let home_skaters: Vec<Skater> = skater_rows
+        .iter()
+        .filter(|s| s.side == "home")
+        .map(|s| Skater {
+            number: s.number.clone(),
+            name: s.name.clone(),
+        })
+        .collect();
+    let away_skaters: Vec<Skater> = skater_rows
+        .iter()
+        .filter(|s| s.side == "away")
+        .map(|s| Skater {
+            number: s.number.clone(),
+            name: s.name.clone(),
+        })
+        .collect();
+
+    let game_summary = if let (Some(home_sum), Some(away_sum)) = (
+        summary_rows.iter().find(|s| s.side == "home"),
+        summary_rows.iter().find(|s| s.side == "away"),
+    ) {
+        let home_stats: SideStats =
+            serde_json::from_value(home_sum.stats.clone()).map_err(anyhow::Error::from)?;
+        let away_stats: SideStats =
+            serde_json::from_value(away_sum.stats.clone()).map_err(anyhow::Error::from)?;
+        Some(GameSummary {
+            home_players: home_stats.players,
+            away_players: away_stats.players,
+            home_totals: home_stats.totals,
+            away_totals: away_stats.totals,
+        })
+    } else {
+        None
+    };
+
+    let game = GameData {
+        version: row.version,
+        venue: Venue {
+            name: row.venue_name,
+            city: row.venue_city,
+            state: row.venue_state,
+        },
+        tournament: row.tournament,
+        host_league: row.host_league,
+        home: TeamData {
+            league: home_side.league.clone(),
+            team: home_side.team.clone(),
+            color: home_side.color.clone(),
+            skaters: home_skaters,
+        },
+        away: TeamData {
+            league: away_side.league.clone(),
+            team: away_side.team.clone(),
+            color: away_side.color.clone(),
+            skaters: away_skaters,
+        },
+        periods: serde_json::from_value(row.periods).map_err(anyhow::Error::from)?,
+        penalties: serde_json::from_value(row.penalties).map_err(anyhow::Error::from)?,
+        game_summary,
+    };
 
     let home_score = game.total_score("home");
     let away_score = game.total_score("away");

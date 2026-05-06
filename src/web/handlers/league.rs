@@ -13,12 +13,7 @@ pub async fn handle(
     Query(params): Query<LeagueParams>,
 ) -> Result<Html<String>, AppError> {
     let rows = sqlx::query!(
-        r#"SELECT data->'home'->>'team' as team FROM games
-           WHERE data @> jsonb_build_object('home', jsonb_build_object('league', $1::text))
-           UNION
-           SELECT data->'away'->>'team' as team FROM games
-           WHERE data @> jsonb_build_object('away', jsonb_build_object('league', $1::text))
-           ORDER BY 1"#,
+        r#"SELECT DISTINCT team FROM game_sides WHERE league = $1 ORDER BY 1"#,
         params.league,
     )
     .fetch_all(&*state.pool)

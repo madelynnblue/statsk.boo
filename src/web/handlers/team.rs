@@ -1,4 +1,4 @@
-use crate::models::GameData;
+use crate::models::{Period, periods_score};
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
 use axum::response::Html;
@@ -34,22 +34,19 @@ pub async fn handle(
     Query(params): Query<TeamParams>,
 ) -> Result<Html<String>, AppError> {
     let rows = sqlx::query!(
-        r#"SELECT drive_file_id as "drive_file_id!: String",
-                  date,
-                  data::text as "data_text!: String"
-           FROM games
-           WHERE data @> jsonb_build_object('home', jsonb_build_object('league', $1::text, 'team', $2::text))
-           UNION ALL
-           SELECT drive_file_id as "drive_file_id!: String",
-                  date,
-                  data::text as "data_text!: String"
-           FROM games
-           WHERE data @> jsonb_build_object('away', jsonb_build_object('league', $1::text, 'team', $2::text))
-           ORDER BY date DESC"#,
+        r#"SELECT g.drive_file_id, g.date, g.periods,
+                  team_side.side as "side!: String",
+                  opp.league as opp_league, opp.team as opp_team
+           FROM games g
+           JOIN game_sides team_side ON team_side.drive_file_id = g.drive_file_id
+           JOIN game_sides opp ON opp.drive_file_id = g.drive_file_id AND opp.side != team_side.side
+           WHERE team_side.league = $1 AND team_side.team = $2
+           ORDER BY g.date DESC"#,
         params.league,
         params.team,
     )
-    .fetch_all(&*state.pool).await?;
+    .fetch_all(&*state.pool)
+    .await?;
 
     let mut game_rows: Vec<GameRow> = Vec::new();
     let mut record = Record {
@@ -59,19 +56,11 @@ pub async fn handle(
     };
 
     for row in &rows {
-        let game: GameData = serde_json::from_str(&row.data_text).map_err(anyhow::Error::from)?;
-
-        let side = if game.home.league.as_deref() == Some(&params.league)
-            && game.home.team.as_deref() == Some(&params.team)
-        {
-            "home"
-        } else {
-            "away"
-        };
-
-        let home_score = game.total_score("home");
-        let away_score = game.total_score("away");
-
+        let periods: Vec<Period> =
+            serde_json::from_value(row.periods.clone()).map_err(anyhow::Error::from)?;
+        let side = &row.side;
+        let home_score = periods_score(&periods, "home");
+        let away_score = periods_score(&periods, "away");
         let (our_score, their_score) = if side == "home" {
             (home_score, away_score)
         } else {
@@ -93,20 +82,14 @@ pub async fn handle(
             }
         };
 
-        let opponent = if side == "home" {
-            &game.away
-        } else {
-            &game.home
-        };
-
         game_rows.push(GameRow {
             drive_file_id: row.drive_file_id.clone(),
             date: row.date.map(|d| d.to_string()).unwrap_or_default(),
-            side: side.to_string(),
+            side: side.clone(),
             our_score,
             their_score,
-            opponent_team: opponent.team.clone().unwrap_or_default(),
-            opponent_league: opponent.league.clone().unwrap_or_default(),
+            opponent_team: row.opp_team.clone().unwrap_or_default(),
+            opponent_league: row.opp_league.clone().unwrap_or_default(),
             result: result.to_string(),
         });
     }

@@ -95,34 +95,99 @@ async fn insert_parsed_file(
         }
     }
 
-    let player_search = game.player_search_text();
-    let team_search = game.team_search_text();
-    let league_search = game.league_search_text();
-    let data = serde_json::to_value(&game)?;
+    let periods = serde_json::to_value(&game.periods)?;
+    let penalties = serde_json::to_value(&game.penalties)?;
+
+    let mut tx = pool.begin().await?;
+
+    // Clean up old child rows (for re-ingest), then insert game row.
+    sqlx::query!("DELETE FROM game_summary WHERE drive_file_id = $1", file_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query!("DELETE FROM game_skaters WHERE drive_file_id = $1", file_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query!("DELETE FROM game_sides WHERE drive_file_id = $1", file_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query!("DELETE FROM games WHERE drive_file_id = $1", file_id)
+        .execute(&mut *tx)
+        .await?;
 
     sqlx::query!(
         r#"INSERT INTO games
-           (drive_file_id, date, data, player_search, team_search, league_search, parser_version)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
-           ON CONFLICT (drive_file_id) DO UPDATE SET
-               date = EXCLUDED.date,
-               data = EXCLUDED.data,
-               player_search = EXCLUDED.player_search,
-               team_search = EXCLUDED.team_search,
-               league_search = EXCLUDED.league_search,
-               parser_version = EXCLUDED.parser_version,
-               ingested_at = NOW()"#,
+           (drive_file_id, date, parser_version, version, tournament, host_league,
+            venue_name, venue_city, venue_state, periods, penalties)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#,
         file_id,
         date,
-        &data,
-        &player_search,
-        &team_search,
-        &league_search,
         parse::PARSER_VERSION,
+        game.version,
+        game.tournament,
+        game.host_league,
+        game.venue.name,
+        game.venue.city,
+        game.venue.state,
+        &periods,
+        &penalties,
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
 
+    // Insert sides.
+    for (side_key, side) in [("home", &game.home), ("away", &game.away)] {
+        sqlx::query!(
+            "INSERT INTO game_sides (drive_file_id, side, league, team, color) VALUES ($1, $2, $3, $4, $5)",
+            file_id,
+            side_key,
+            side.league,
+            side.team,
+            side.color,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // Insert skaters for this side.
+        for skater in &side.skaters {
+            sqlx::query!(
+                "INSERT INTO game_skaters (drive_file_id, side, number, name) VALUES ($1, $2, $3, $4)",
+                file_id,
+                side_key,
+                skater.number,
+                skater.name,
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+
+    // Insert game summary if present.
+    if let Some(ref summary) = game.game_summary {
+        let home_stats = serde_json::to_value(&crate::models::SideStats {
+            players: summary.home_players.clone(),
+            totals: summary.home_totals.clone(),
+        })?;
+        let away_stats = serde_json::to_value(&crate::models::SideStats {
+            players: summary.away_players.clone(),
+            totals: summary.away_totals.clone(),
+        })?;
+        sqlx::query!(
+            "INSERT INTO game_summary (drive_file_id, side, stats) VALUES ($1, 'home', $2)",
+            file_id,
+            &home_stats,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "INSERT INTO game_summary (drive_file_id, side, stats) VALUES ($1, 'away', $2)",
+            file_id,
+            &away_stats,
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    tx.commit().await?;
     Ok(())
 }
 

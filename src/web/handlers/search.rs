@@ -1,9 +1,7 @@
-use crate::models::GameData;
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
 use axum::response::Html;
 use serde::Deserialize;
-use std::collections::HashSet;
 
 #[derive(Deserialize)]
 pub struct SearchParams {
@@ -41,76 +39,53 @@ pub async fn handle(
     Query(params): Query<SearchParams>,
 ) -> Result<Html<String>, AppError> {
     let q = params.q.as_deref().unwrap_or("").trim().to_string();
-    let q_lower = q.to_lowercase();
 
     let (players, teams, leagues, games) = if q.len() >= 2 {
         let pattern = format!("%{}%", q);
 
-        let rows = sqlx::query!(
-            "SELECT data FROM games WHERE player_search ILIKE $1 ORDER BY date DESC LIMIT 200",
+        let player_rows = sqlx::query!(
+            r#"SELECT DISTINCT gs.name, gs.number, gsi.league, gsi.team
+               FROM game_skaters gs
+               JOIN game_sides gsi ON gsi.drive_file_id = gs.drive_file_id AND gsi.side = gs.side
+               WHERE gs.name ILIKE $1
+               ORDER BY 4, 1
+               LIMIT 200"#,
             &pattern,
         )
         .fetch_all(&*state.pool)
         .await?;
 
-        let mut seen_players: HashSet<(String, String, String)> = HashSet::new();
-        let mut players: Vec<PlayerResult> = Vec::new();
-
-        for row in &rows {
-            let game: GameData =
-                serde_json::from_value(row.data.clone()).map_err(anyhow::Error::from)?;
-            for side_data in [&game.home, &game.away] {
-                let league = side_data.league.clone().unwrap_or_default();
-                let team = side_data.team.clone().unwrap_or_default();
-                for skater in &side_data.skaters {
-                    if skater.name.to_lowercase().contains(&q_lower) {
-                        let key = (league.clone(), skater.name.clone(), skater.number.clone());
-                        if seen_players.insert(key) {
-                            players.push(PlayerResult {
-                                league: league.clone(),
-                                team: team.clone(),
-                                name: skater.name.clone(),
-                                number: skater.number.clone(),
-                            });
-                        }
-                    }
-                }
-            }
-        }
+        let players: Vec<PlayerResult> = player_rows
+            .iter()
+            .map(|r| PlayerResult {
+                league: r.league.clone().unwrap_or_default(),
+                team: r.team.clone().unwrap_or_default(),
+                name: r.name.clone(),
+                number: r.number.clone(),
+            })
+            .collect();
 
         let team_rows = sqlx::query!(
-            "SELECT data FROM games WHERE team_search ILIKE $1 ORDER BY date DESC LIMIT 200",
+            r#"SELECT DISTINCT league, team FROM game_sides
+               WHERE league ILIKE $1 OR team ILIKE $1
+               ORDER BY 1, 2
+               LIMIT 200"#,
             &pattern,
         )
         .fetch_all(&*state.pool)
         .await?;
 
-        let mut seen_teams: HashSet<(String, String)> = HashSet::new();
-        let mut teams: Vec<TeamResult> = Vec::new();
-
-        for row in &team_rows {
-            let game: GameData =
-                serde_json::from_value(row.data.clone()).map_err(anyhow::Error::from)?;
-            for side_data in [&game.home, &game.away] {
-                let league = side_data.league.clone().unwrap_or_default();
-                let team = side_data.team.clone().unwrap_or_default();
-                let name_matches = league.to_lowercase().contains(&q_lower)
-                    || team.to_lowercase().contains(&q_lower);
-                if name_matches {
-                    let key = (league.clone(), team.clone());
-                    if seen_teams.insert(key) {
-                        teams.push(TeamResult { league, team });
-                    }
-                }
-            }
-        }
+        let teams: Vec<TeamResult> = team_rows
+            .iter()
+            .map(|r| TeamResult {
+                league: r.league.clone().unwrap_or_default(),
+                team: r.team.clone().unwrap_or_default(),
+            })
+            .collect();
 
         let league_rows = sqlx::query!(
-            r#"SELECT DISTINCT data->'home'->>'league' as league FROM games
-               WHERE league_search ILIKE $1 AND data->'home'->>'league' ILIKE $1
-               UNION
-               SELECT DISTINCT data->'away'->>'league' as league FROM games
-               WHERE league_search ILIKE $1 AND data->'away'->>'league' ILIKE $1
+            r#"SELECT DISTINCT league FROM game_sides
+               WHERE league ILIKE $1
                ORDER BY 1"#,
             &pattern,
         )
@@ -123,18 +98,18 @@ pub async fn handle(
             .collect();
 
         let game_rows = sqlx::query!(
-            r#"SELECT drive_file_id, date,
-                      data->'home'->>'team' as home_team,
-                      data->'home'->>'league' as home_league,
-                      data->'away'->>'team' as away_team,
-                      data->'away'->>'league' as away_league,
-                      data->>'tournament' as tournament,
-                      data->'venue'->>'name' as venue_name
-               FROM games
-               WHERE data->>'tournament' ILIKE $1
-                  OR data->'venue'->>'name' ILIKE $1
-                  OR data->'venue'->>'city' ILIKE $1
-               ORDER BY date DESC
+            r#"SELECT DISTINCT ON (g.date, g.drive_file_id)
+                      g.drive_file_id, g.date,
+                      home.team as home_team, home.league as home_league,
+                      away.team as away_team, away.league as away_league,
+                      g.tournament, g.venue_name
+               FROM games g
+               JOIN game_sides home ON home.drive_file_id = g.drive_file_id AND home.side = 'home'
+               JOIN game_sides away ON away.drive_file_id = g.drive_file_id AND away.side = 'away'
+               WHERE g.tournament ILIKE $1
+                  OR g.venue_name ILIKE $1
+                  OR g.venue_city ILIKE $1
+               ORDER BY g.date DESC, g.drive_file_id
                LIMIT 200"#,
             &pattern,
         )

@@ -1,4 +1,4 @@
-use crate::models::GameData;
+use crate::models::{Period, periods_score};
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
 use axum::response::Html;
@@ -41,28 +41,15 @@ pub async fn handle(
     Query(params): Query<PlayerParams>,
 ) -> Result<Html<String>, AppError> {
     let rows = sqlx::query!(
-        r#"SELECT drive_file_id as "drive_file_id!: String",
-                  date,
-                  data as "data!: serde_json::Value"
-           FROM games
-           WHERE data @> jsonb_build_object(
-               'home', jsonb_build_object(
-                   'league', $1::text,
-                   'skaters', jsonb_build_array(jsonb_build_object('number', $3::text, 'name', $2::text))
-               )
-           )
-           UNION ALL
-           SELECT drive_file_id as "drive_file_id!: String",
-                  date,
-                  data as "data!: serde_json::Value"
-           FROM games
-           WHERE data @> jsonb_build_object(
-               'away', jsonb_build_object(
-                   'league', $1::text,
-                   'skaters', jsonb_build_array(jsonb_build_object('number', $3::text, 'name', $2::text))
-               )
-           )
-           ORDER BY date DESC"#,
+        r#"SELECT g.drive_file_id, g.date, g.periods,
+                  gs.side as "side!: String",
+                  opp.league as opp_league, opp.team as opp_team
+           FROM games g
+           JOIN game_skaters gs ON gs.drive_file_id = g.drive_file_id
+           JOIN game_sides player_side ON player_side.drive_file_id = g.drive_file_id AND player_side.side = gs.side
+           JOIN game_sides opp ON opp.drive_file_id = g.drive_file_id AND opp.side != gs.side
+           WHERE player_side.league = $1 AND gs.name = $2 AND gs.number = $3
+           ORDER BY g.date DESC"#,
         params.league,
         params.name,
         params.number,
@@ -78,28 +65,11 @@ pub async fn handle(
     };
 
     for row in &rows {
-        let game: GameData =
-            serde_json::from_value(row.data.clone()).map_err(anyhow::Error::from)?;
-
-        let side = if game.home.league.as_deref() == Some(&params.league)
-            && game
-                .home
-                .skaters
-                .iter()
-                .any(|s| s.number == params.number && s.name == params.name)
-        {
-            "home"
-        } else {
-            "away"
-        };
-
-        let opponent = if side == "home" {
-            &game.away
-        } else {
-            &game.home
-        };
-        let opponent_team = opponent.team.clone().unwrap_or_default();
-        let opponent_league = opponent.league.clone().unwrap_or_default();
+        let periods: Vec<Period> =
+            serde_json::from_value(row.periods.clone()).map_err(anyhow::Error::from)?;
+        let side = &row.side;
+        let opponent_team = row.opp_team.clone().unwrap_or_default();
+        let opponent_league = row.opp_league.clone().unwrap_or_default();
 
         let mut games_as_jammer = false;
         let mut games_as_pivot = false;
@@ -107,7 +77,7 @@ pub async fn handle(
         let mut jams_as_jammer = 0u16;
         let mut jams_as_pivot = 0u16;
         let mut jams_as_blocker = 0u16;
-        for jam in game.periods.iter().flat_map(|p| &p.jams) {
+        for jam in periods.iter().flat_map(|p| &p.jams) {
             let js = if side == "home" { &jam.home } else { &jam.away };
             let is_jammer = js.jammer.as_deref() == Some(&params.number);
             let is_pivot = js
@@ -132,8 +102,8 @@ pub async fn handle(
             }
         }
 
-        let home_score = game.total_score("home");
-        let away_score = game.total_score("away");
+        let home_score = periods_score(&periods, "home");
+        let away_score = periods_score(&periods, "away");
         let (our_score, their_score) = if side == "home" {
             (home_score, away_score)
         } else {
@@ -164,7 +134,7 @@ pub async fn handle(
             date: row.date.map(|d| d.to_string()).unwrap_or_default(),
             opponent_team,
             opponent_league,
-            side: side.to_string(),
+            side: side.clone(),
             games_as_jammer: games_as_jammer as u16,
             games_as_pivot: games_as_pivot as u16,
             games_as_blocker: games_as_blocker as u16,
