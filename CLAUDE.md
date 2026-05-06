@@ -59,3 +59,5 @@ WSB (WFTDA Statsbook Browser) downloads WFTDA statsbook `.xlsx` files from a pub
 - Never run linters
 - Keep scores and small integers as `i16` throughout (matches DB `SMALLINT`-equivalent values in JSONB)
 - Player numbers must preserve leading zeros — `"1"`, `"01"`, and `"001"` are different identities. Always use `String` for player numbers, never integer types. Use `cell_str()` when parsing them from Excel.
+- Use `cargo add` to add dependencies (not manual edits to Cargo.toml) so the latest version is always used
+- Run `cargo fmt` after modifying Rust code
