@@ -24,6 +24,18 @@ struct TeamResult {
     team: String,
 }
 
+#[derive(serde::Serialize)]
+struct GameResult {
+    drive_file_id: String,
+    date: Option<chrono::NaiveDate>,
+    home_team: String,
+    home_league: String,
+    away_team: String,
+    away_league: String,
+    tournament: Option<String>,
+    venue_name: Option<String>,
+}
+
 pub async fn handle(
     State(state): State<AppState>,
     Query(params): Query<SearchParams>,
@@ -31,7 +43,7 @@ pub async fn handle(
     let q = params.q.as_deref().unwrap_or("").trim().to_string();
     let q_lower = q.to_lowercase();
 
-    let (players, teams, leagues) = if q.len() >= 2 {
+    let (players, teams, leagues, games) = if q.len() >= 2 {
         let pattern = format!("%{}%", q);
 
         let rows = sqlx::query!(
@@ -110,9 +122,42 @@ pub async fn handle(
             .filter_map(|r| r.league.clone())
             .collect();
 
-        (players, teams, leagues)
+        let game_rows = sqlx::query!(
+            r#"SELECT drive_file_id, date,
+                      data->'home'->>'team' as home_team,
+                      data->'home'->>'league' as home_league,
+                      data->'away'->>'team' as away_team,
+                      data->'away'->>'league' as away_league,
+                      data->>'tournament' as tournament,
+                      data->'venue'->>'name' as venue_name
+               FROM games
+               WHERE data->>'tournament' ILIKE $1
+                  OR data->'venue'->>'name' ILIKE $1
+                  OR data->'venue'->>'city' ILIKE $1
+               ORDER BY date DESC
+               LIMIT 200"#,
+            &pattern,
+        )
+        .fetch_all(&*state.pool)
+        .await?;
+
+        let games: Vec<GameResult> = game_rows
+            .into_iter()
+            .map(|r| GameResult {
+                drive_file_id: r.drive_file_id,
+                date: r.date,
+                home_team: r.home_team.unwrap_or_default(),
+                home_league: r.home_league.unwrap_or_default(),
+                away_team: r.away_team.unwrap_or_default(),
+                away_league: r.away_league.unwrap_or_default(),
+                tournament: r.tournament,
+                venue_name: r.venue_name,
+            })
+            .collect();
+
+        (players, teams, leagues, games)
     } else {
-        (vec![], vec![], vec![])
+        (vec![], vec![], vec![], vec![])
     };
 
     let tmpl = state.env.get_template("search.html")?;
@@ -121,6 +166,7 @@ pub async fn handle(
         players => players,
         teams => teams,
         leagues => leagues,
+        games => games,
     })?;
     Ok(Html(html))
 }

@@ -2,8 +2,12 @@
 {% block title %}Search: {{ query }}{% endblock %}
 {% block content %}
 {% if query | length >= 2 %}
-  <h2>Players</h2>
+  {% if not players and not teams and not leagues and not games %}
+  <p>Nothing found for "{{ query }}".</p>
+  {% endif %}
+
   {% if players %}
+  <h2>Players</h2>
   <table>
     <thead><tr><th>Name</th><th>#</th><th>Team</th><th>League</th></tr></thead>
     <tbody>
@@ -17,12 +21,10 @@
     {% endfor %}
     </tbody>
   </table>
-  {% else %}
-  <p>No players found for "{{ query }}".</p>
   {% endif %}
 
-  <h2>Teams</h2>
   {% if teams %}
+  <h2>Teams</h2>
   <table>
     <thead><tr><th>Team</th><th>League</th></tr></thead>
     <tbody>
@@ -34,19 +36,35 @@
     {% endfor %}
     </tbody>
   </table>
-  {% else %}
-  <p>No teams found for "{{ query }}".</p>
   {% endif %}
 
-  <h2>Leagues</h2>
   {% if leagues %}
+  <h2>Leagues</h2>
   <ul>
     {% for l in leagues %}
     <li><a href="/league?league={{ l | urlencode }}">{{ l }}</a></li>
     {% endfor %}
   </ul>
-  {% else %}
-  <p>No leagues found for "{{ query }}".</p>
+  {% endif %}
+
+  {% if games %}
+  <h2>Games</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Home</th><th>Away</th><th>Match</th></tr></thead>
+    <tbody>
+    {% for g in games %}
+      <tr>
+        <td><a href="/game/{{ g.drive_file_id }}">{{ g.date | default("") }}</a></td>
+        <td><a href="/team?league={{ g.home_league | urlencode }}&team={{ g.home_team | urlencode }}">{{ g.home_team }}</a></td>
+        <td><a href="/team?league={{ g.away_league | urlencode }}&team={{ g.away_team | urlencode }}">{{ g.away_team }}</a></td>
+        <td>
+          {%- if g.tournament and query | lower in g.tournament | lower %}Tournament: {{ g.tournament }}{% endif -%}
+          {%- if g.venue_name and query | lower in g.venue_name | lower %}{% if g.tournament and query | lower in g.tournament | lower %}, {% endif %}Venue: {{ g.venue_name }}{% endif -%}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
   {% endif %}
 {% else %}
 <p>Enter at least 2 characters to search.</p>

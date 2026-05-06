@@ -17,9 +17,9 @@
 <p><a href="https://drive.google.com/file/d/{{ file_id }}/view" target="_blank">View statsbook on Google Drive</a></p>
 <p>
   {{ date }}
-  {% if game.venue.name %} · {{ game.venue.name }}{% endif %}
+  {% if game.venue.name %} · <a href="/search?q={{ game.venue.name | urlencode }}">{{ game.venue.name }}</a>{% endif %}
   {%- if game.venue.city %}, {{ game.venue.city }}{% endif %}
-  {% if game.tournament %} · {{ game.tournament }}{% endif %}
+  {% if game.tournament %} · <a href="/search?q={{ game.tournament | urlencode }}">{{ game.tournament }}</a>{% endif %}
 </p>
 
 <h2>Final Score: {{ home_score }}–{{ away_score }}</h2>
