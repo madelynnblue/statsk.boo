@@ -140,7 +140,13 @@ async fn reingest_stale(pool: &PgPool, client: &DriveClient) -> anyhow::Result<u
     );
 
     let mut count = 0;
-    for row in &rows {
+    for (i, row) in rows.iter().enumerate() {
+        info!(
+            "re-ingesting {}/{}: {}",
+            i + 1,
+            rows.len(),
+            row.drive_file_id
+        );
         match reingest_file(pool, client, &row.drive_file_id).await {
             Ok(()) => count += 1,
             Err(e) => warn!("re-ingest failed for {}: {e:#}", row.drive_file_id),

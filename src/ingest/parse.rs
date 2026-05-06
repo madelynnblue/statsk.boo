@@ -5,7 +5,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 1;
+pub const PARSER_VERSION: i64 = 2;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes)?;
@@ -40,6 +40,11 @@ pub fn parse_statsbook_with_date(bytes: &[u8]) -> Result<(GameData, Option<chron
     Ok((game, date))
 }
 
+/// A `*` after a player number in the IGRF roster means they played 0 jams.
+fn is_zero_jam_player(number: &str) -> bool {
+    number.ends_with('*')
+}
+
 fn cell_str(r: &Range<Data>, row: u32, col: u32) -> Option<String> {
     let data = r.get_value((row, col))?;
     match data {
@@ -51,14 +56,8 @@ fn cell_str(r: &Range<Data>, row: u32, col: u32) -> Option<String> {
                 Some(t.to_string())
             }
         }
-        Data::Int(v) => {
-            eprintln!("DEBUG cell_str Int at ({}, {}): {}", row, col, v);
-            Some(v.to_string())
-        }
-        Data::Float(v) => {
-            eprintln!("DEBUG cell_str Float at ({}, {}): {}", row, col, v);
-            Some(float_to_int_str(*v))
-        }
+        Data::Int(v) => Some(v.to_string()),
+        Data::Float(v) => Some(float_to_int_str(*v)),
         _ => None,
     }
 }
@@ -134,14 +133,21 @@ fn parse_team<R: std::io::Read + std::io::Seek>(
     let mut skaters = Vec::new();
     for i in 0..max_skaters {
         let row = first_row + i;
-        let number = match cell_str(&sheet, row, num_col) {
+        let raw_number = match cell_str(&sheet, row, num_col) {
             Some(n) => n,
             None => break,
         };
-        let name = cell_str(&sheet, row, name_col).unwrap_or_default();
-        if !number.is_empty() {
-            skaters.push(Skater { number, name });
+        if raw_number.is_empty() {
+            continue;
         }
+        if is_zero_jam_player(&raw_number) {
+            continue;
+        }
+        let name = cell_str(&sheet, row, name_col).unwrap_or_default();
+        skaters.push(Skater {
+            number: raw_number,
+            name,
+        });
     }
     Ok(TeamData {
         league,
@@ -238,6 +244,9 @@ fn parse_lineup_side(sheet: &Range<Data>, row: u32, no_pivot_col: u32) -> Vec<Li
         .iter()
         .filter_map(|(col, pos)| {
             let number = cell_str(sheet, row, *col)?;
+            if is_zero_jam_player(&number) {
+                return None;
+            }
             let box_trips = (1..=3u32)
                 .filter(|&b| cell_str(sheet, row, col + b).is_some())
                 .count() as u8;
@@ -270,6 +279,9 @@ fn parse_penalties<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Result
                 Some(n) => n,
                 None => break,
             };
+            if is_zero_jam_player(&skater_num) {
+                continue;
+            }
             for c in pen_col..(pen_col + 9) {
                 if let Some(code) = cell_str(&sheet, code_row, c) {
                     let jam = cell_i16(&sheet, jam_row, c);
@@ -325,6 +337,9 @@ fn parse_game_summary<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Res
 
 fn parse_summary_player(sheet: &Range<Data>, row: u32) -> Option<SummaryPlayer> {
     let number = cell_str(sheet, row, 0)?;
+    if is_zero_jam_player(&number) {
+        return None;
+    }
     let name = cell_str(sheet, row, 1).unwrap_or_default();
     Some(SummaryPlayer {
         number,

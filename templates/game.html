@@ -26,7 +26,7 @@
 
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;margin:1rem 0">
   <div>
-    <h3>{{ game.home.team | default("Home") }}{% if game.home.color %} · {{ game.home.color }}{% endif %}</h3>
+    <h3><a href="/team?league={{ game.home.league | urlencode }}&team={{ game.home.team | urlencode }}">{{ game.home.team | default("Home") }}</a>{% if game.home.color %} · {{ game.home.color }}{% endif %}</h3>
     <table>
       <thead><tr><th>#</th><th>Name</th></tr></thead>
       <tbody>
@@ -40,7 +40,7 @@
     </table>
   </div>
   <div>
-    <h3>{{ game.away.team | default("Away") }}{% if game.away.color %} · {{ game.away.color }}{% endif %}</h3>
+    <h3><a href="/team?league={{ game.away.league | urlencode }}&team={{ game.away.team | urlencode }}">{{ game.away.team | default("Away") }}</a>{% if game.away.color %} · {{ game.away.color }}{% endif %}</h3>
     <table>
       <thead><tr><th>#</th><th>Name</th></tr></thead>
       <tbody>
