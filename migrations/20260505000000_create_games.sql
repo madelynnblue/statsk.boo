@@ -5,8 +5,9 @@ CREATE TABLE IF NOT EXISTS games (
   date           DATE,
   ingested_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   data           JSONB NOT NULL,
-  player_search  TEXT NOT NULL DEFAULT '',
-  team_search    TEXT NOT NULL DEFAULT ''
+  player_search   TEXT NOT NULL DEFAULT '',
+  team_search     TEXT NOT NULL DEFAULT '',
+  parser_version  INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS games_data_idx ON games USING GIN (data);

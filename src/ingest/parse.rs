@@ -3,6 +3,10 @@ use anyhow::{Context, Result};
 use calamine::{Data, DataType, Range, Reader, Xlsx, open_workbook_from_rs};
 use std::io::Cursor;
 
+/// Bump this whenever the parsing logic changes, so the ingester can re-parse
+/// games that were ingested with an older version of the parser.
+pub const PARSER_VERSION: i64 = 1;
+
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes)?;
     Ok(game)

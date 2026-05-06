@@ -61,3 +61,4 @@ WSB (WFTDA Statsbook Browser) downloads WFTDA statsbook `.xlsx` files from a pub
 - Player numbers must preserve leading zeros — `"1"`, `"01"`, and `"001"` are different identities. Always use `String` for player numbers, never integer types. Use `cell_str()` when parsing them from Excel.
 - Use `cargo add` to add dependencies (not manual edits to Cargo.toml) so the latest version is always used
 - Run `cargo fmt` after modifying Rust code
+- **Parser version:** `PARSER_VERSION` in `src/ingest/parse.rs` must be bumped whenever the parsing logic changes. The ingester re-parses all games with an older `parser_version` on startup, so downstream consumers always see fresh data.
