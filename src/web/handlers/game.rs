@@ -52,11 +52,11 @@ pub async fn handle(
     let home_side = side_rows
         .iter()
         .find(|s| s.side == "home")
-        .expect("game must have home side");
+        .ok_or(AppError::NotFound)?;
     let away_side = side_rows
         .iter()
         .find(|s| s.side == "away")
-        .expect("game must have away side");
+        .ok_or(AppError::NotFound)?;
 
     let home_skaters: Vec<Skater> = skater_rows
         .iter()
@@ -129,7 +129,7 @@ pub async fn handle(
 
     let tmpl = state.env.get_template("game.html")?;
     let html = tmpl.render(minijinja::context! {
-        date       => row.date.map(|d| d.to_string()).unwrap_or_default(),
+        date       => row.date.to_string(),
         home_score,
         away_score,
         game       => game,

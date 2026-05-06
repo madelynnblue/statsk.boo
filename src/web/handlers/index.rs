@@ -12,7 +12,7 @@ pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppEr
            FROM games g
            JOIN game_sides home ON home.drive_file_id = g.drive_file_id AND home.side = 'home'
            JOIN game_sides away ON away.drive_file_id = g.drive_file_id AND away.side = 'away'
-           ORDER BY g.date DESC NULLS LAST, g.ingested_at DESC
+           ORDER BY g.date DESC, g.ingested_at DESC
            LIMIT 10"#,
     )
     .fetch_all(&*state.pool)
@@ -44,7 +44,7 @@ pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppEr
 #[derive(Serialize)]
 struct RecentGame {
     drive_file_id: String,
-    date: Option<chrono::NaiveDate>,
+    date: chrono::NaiveDate,
     home_score: i16,
     away_score: i16,
     home_team: String,

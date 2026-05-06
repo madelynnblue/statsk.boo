@@ -84,7 +84,7 @@ pub async fn handle(
 
         game_rows.push(GameRow {
             drive_file_id: row.drive_file_id.clone(),
-            date: row.date.map(|d| d.to_string()).unwrap_or_default(),
+            date: row.date.to_string(),
             side: side.clone(),
             our_score,
             their_score,

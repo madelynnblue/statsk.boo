@@ -2,7 +2,10 @@ pub mod drive;
 pub mod parse;
 
 use crate::config::Config;
+use crate::models::{GameData, periods_score};
+use chrono::{DateTime, NaiveDate, Utc};
 use drive::DriveClient;
+use serde::Serialize;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::{error, info, warn};
@@ -41,7 +44,7 @@ async fn run_ingest(cfg: &Config, pool: &PgPool, client: &DriveClient) -> anyhow
 
     for file in files {
         info!("ingesting {}", file.name);
-        match process_file(pool, client, &file.id, &file.name).await {
+        match process_file(pool, client, &file).await {
             Ok(true) => info!("ingested {}", file.name),
             Ok(false) => info!("skipped {} (already present)", file.name),
             Err(e) => warn!("skipping {}: {e:#}", file.name),
@@ -60,21 +63,66 @@ async fn last_ingest_at(pool: &PgPool) -> anyhow::Result<Option<chrono::DateTime
 async fn process_file(
     pool: &PgPool,
     client: &DriveClient,
-    file_id: &str,
-    file_name: &str,
+    file: &drive::DriveFile,
 ) -> anyhow::Result<bool> {
-    let row = sqlx::query!(
-        "SELECT COUNT(*) as count FROM games WHERE drive_file_id = $1",
-        file_id
+    let modified_time: DateTime<Utc> = file.modified_time.parse()?;
+
+    // Skip if we already have this file at this (or a newer) modified time. This
+    // saves re-downloading on every poll for files in the `since` window that
+    // haven't actually changed.
+    let existing = sqlx::query!(
+        "SELECT modified_time FROM games WHERE drive_file_id = $1",
+        file.id,
     )
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await?;
-    if row.count.unwrap_or(0) > 0 {
+    if let Some(existing) = existing
+        && existing.modified_time >= modified_time
+    {
         return Ok(false);
     }
 
-    insert_parsed_file(pool, client, file_id, file_name).await?;
+    insert_parsed_file(pool, client, &file.id, &file.name, modified_time).await?;
     Ok(true)
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize)]
+struct GameFingerprint {
+    date: NaiveDate,
+    home_league: String,
+    home_team: String,
+    away_league: String,
+    away_team: String,
+    home_score: i16,
+    away_score: i16,
+}
+
+fn build_fingerprint(game: &GameData, date: Option<NaiveDate>) -> anyhow::Result<GameFingerprint> {
+    Ok(GameFingerprint {
+        date: date.ok_or_else(|| anyhow::anyhow!("missing date"))?,
+        home_league: game
+            .home
+            .league
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("missing home league"))?,
+        home_team: game
+            .home
+            .team
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("missing home team"))?,
+        away_league: game
+            .away
+            .league
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("missing away league"))?,
+        away_team: game
+            .away
+            .team
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("missing away team"))?,
+        home_score: periods_score(&game.periods, "home"),
+        away_score: periods_score(&game.periods, "away"),
+    })
 }
 
 async fn insert_parsed_file(
@@ -82,6 +130,7 @@ async fn insert_parsed_file(
     client: &DriveClient,
     file_id: &str,
     file_name: &str,
+    modified_time: DateTime<Utc>,
 ) -> anyhow::Result<()> {
     let bytes = client.download_file(file_id).await?;
     let (game, date) = parse::parse_statsbook_with_date(&bytes)
@@ -95,30 +144,64 @@ async fn insert_parsed_file(
         }
     }
 
+    let fingerprint = match build_fingerprint(&game, date) {
+        Ok(fp) => fp,
+        Err(e) => {
+            warn!("skipping {file_name}: cannot build fingerprint: {e}");
+            return Ok(());
+        }
+    };
+    let fingerprint_json = serde_json::to_value(&fingerprint)?;
+
     let periods = serde_json::to_value(&game.periods)?;
     let penalties = serde_json::to_value(&game.penalties)?;
 
     let mut tx = pool.begin().await?;
 
-    // Clean up old child rows (for re-ingest), then insert game row.
-    sqlx::query!("DELETE FROM game_summary WHERE drive_file_id = $1", file_id)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query!("DELETE FROM game_skaters WHERE drive_file_id = $1", file_id)
-        .execute(&mut *tx)
-        .await?;
-    sqlx::query!("DELETE FROM game_sides WHERE drive_file_id = $1", file_id)
-        .execute(&mut *tx)
-        .await?;
+    // Remove the row we are about to replace (noop for new files; clears old data for re-ingest).
     sqlx::query!("DELETE FROM games WHERE drive_file_id = $1", file_id)
         .execute(&mut *tx)
         .await?;
 
+    // Check for a duplicate by fingerprint. The self-delete above ensures we never match
+    // the row we just removed, so this can only find a genuinely different file.
+    let existing = sqlx::query!(
+        r#"SELECT drive_file_id, modified_time FROM games WHERE fingerprint = $1 ORDER BY modified_time DESC LIMIT 1"#,
+        &fingerprint_json,
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    if let Some(ref existing) = existing {
+        if existing.modified_time >= modified_time {
+            info!(
+                "duplicate game detected: skipping {} (existing {} has same or newer modified time)",
+                file_id, existing.drive_file_id
+            );
+            // Roll back the self-delete above so the existing row we matched on
+            // (and any sibling row with the same drive_file_id, if this is a
+            // re-ingest path) is preserved.
+            tx.rollback().await?;
+            return Ok(());
+        }
+        info!(
+            "duplicate game detected: replacing {} with {} (newer modified time)",
+            existing.drive_file_id, file_id
+        );
+        sqlx::query!(
+            "DELETE FROM games WHERE drive_file_id = $1",
+            existing.drive_file_id
+        )
+        .execute(&mut *tx)
+        .await?;
+    }
+
     sqlx::query!(
         r#"INSERT INTO games
            (drive_file_id, date, parser_version, version, tournament, host_league,
-            venue_name, venue_city, venue_state, periods, penalties)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"#,
+            venue_name, venue_city, venue_state, periods, penalties,
+            modified_time, fingerprint)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"#,
         file_id,
         date,
         parse::PARSER_VERSION,
@@ -130,11 +213,12 @@ async fn insert_parsed_file(
         game.venue.state,
         &periods,
         &penalties,
+        modified_time,
+        &fingerprint_json,
     )
     .execute(&mut *tx)
     .await?;
 
-    // Insert sides.
     for (side_key, side) in [("home", &game.home), ("away", &game.away)] {
         sqlx::query!(
             "INSERT INTO game_sides (drive_file_id, side, league, team, color) VALUES ($1, $2, $3, $4, $5)",
@@ -147,7 +231,6 @@ async fn insert_parsed_file(
         .execute(&mut *tx)
         .await?;
 
-        // Insert skaters for this side.
         for skater in &side.skaters {
             sqlx::query!(
                 "INSERT INTO game_skaters (drive_file_id, side, number, name) VALUES ($1, $2, $3, $4)",
@@ -161,7 +244,6 @@ async fn insert_parsed_file(
         }
     }
 
-    // Insert game summary if present.
     if let Some(ref summary) = game.game_summary {
         let home_stats = serde_json::to_value(&crate::models::SideStats {
             players: summary.home_players.clone(),
@@ -193,7 +275,7 @@ async fn insert_parsed_file(
 
 async fn reingest_stale(pool: &PgPool, client: &DriveClient) -> anyhow::Result<usize> {
     let rows = sqlx::query!(
-        "SELECT drive_file_id FROM games WHERE parser_version < $1",
+        "SELECT drive_file_id, modified_time FROM games WHERE parser_version < $1",
         parse::PARSER_VERSION
     )
     .fetch_all(pool)
@@ -216,7 +298,15 @@ async fn reingest_stale(pool: &PgPool, client: &DriveClient) -> anyhow::Result<u
             rows.len(),
             row.drive_file_id
         );
-        match reingest_file(pool, client, &row.drive_file_id).await {
+        match insert_parsed_file(
+            pool,
+            client,
+            &row.drive_file_id,
+            &row.drive_file_id,
+            row.modified_time,
+        )
+        .await
+        {
             Ok(()) => count += 1,
             Err(e) => warn!("re-ingest failed for {}: {e:#}", row.drive_file_id),
         }
@@ -224,6 +314,69 @@ async fn reingest_stale(pool: &PgPool, client: &DriveClient) -> anyhow::Result<u
     Ok(count)
 }
 
-async fn reingest_file(pool: &PgPool, client: &DriveClient, file_id: &str) -> anyhow::Result<()> {
-    insert_parsed_file(pool, client, file_id, file_id).await
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{GameData, TeamData, Venue};
+
+    fn make_game(
+        home_league: &str,
+        home_team: &str,
+        away_league: &str,
+        away_team: &str,
+    ) -> GameData {
+        GameData {
+            version: "2024".into(),
+            venue: Venue {
+                name: None,
+                city: None,
+                state: None,
+            },
+            tournament: None,
+            host_league: None,
+            home: TeamData {
+                league: Some(home_league.into()),
+                team: Some(home_team.into()),
+                color: None,
+                skaters: vec![],
+            },
+            away: TeamData {
+                league: Some(away_league.into()),
+                team: Some(away_team.into()),
+                color: None,
+                skaters: vec![],
+            },
+            periods: vec![],
+            penalties: vec![],
+            game_summary: None,
+        }
+    }
+
+    #[test]
+    fn build_fingerprint_happy_path() {
+        let game = make_game("Home League", "Home Team", "Away League", "Away Team");
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 5, 2).unwrap();
+        let fp = build_fingerprint(&game, Some(date)).unwrap();
+        assert_eq!(fp.date, date);
+        assert_eq!(fp.home_league, "Home League");
+        assert_eq!(fp.home_team, "Home Team");
+        assert_eq!(fp.away_league, "Away League");
+        assert_eq!(fp.away_team, "Away Team");
+        assert_eq!(fp.home_score, 0);
+        assert_eq!(fp.away_score, 0);
+    }
+
+    #[test]
+    fn build_fingerprint_missing_date_errors() {
+        let game = make_game("A", "B", "C", "D");
+        assert!(build_fingerprint(&game, None).is_err());
+    }
+
+    #[test]
+    fn build_fingerprint_missing_field_errors() {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 5, 2).unwrap();
+        let mut game = make_game("A", "B", "C", "D");
+        game.home.league = None;
+        assert!(build_fingerprint(&game, Some(date)).is_err());
+    }
 }

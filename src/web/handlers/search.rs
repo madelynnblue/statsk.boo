@@ -25,7 +25,7 @@ struct TeamResult {
 #[derive(serde::Serialize)]
 struct GameResult {
     drive_file_id: String,
-    date: Option<chrono::NaiveDate>,
+    date: chrono::NaiveDate,
     home_team: String,
     home_league: String,
     away_team: String,

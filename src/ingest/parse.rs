@@ -138,9 +138,10 @@ fn cell_str_with_formula(
     // Try formula resolution.
     if let Some(fm_range) = formulas
         && let Some(fm) = fm_range.get_value((row, col))
-        && !fm.is_empty() {
-            return resolve_igrf_formula(fm, igrf);
-        }
+        && !fm.is_empty()
+    {
+        return resolve_igrf_formula(fm, igrf);
+    }
     None
 }
 
