@@ -2,7 +2,7 @@
 {% block title %}{{ name }} #{{ number }}{% endblock %}
 {% block content %}
 <h1>{{ name }} <small>#{{ number }}</small></h1>
-<p><a href="/search?q={{ league | urlencode }}">{{ league }}</a></p>
+<p><a href="/league?league={{ league | urlencode }}">{{ league }}</a></p>
 
 <h2>Career Stats</h2>
 <div class="stats-grid">

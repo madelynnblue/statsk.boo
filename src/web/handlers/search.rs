@@ -31,7 +31,7 @@ pub async fn handle(
     let q = params.q.as_deref().unwrap_or("").trim().to_string();
     let q_lower = q.to_lowercase();
 
-    let (players, teams) = if q.len() >= 2 {
+    let (players, teams, leagues) = if q.len() >= 2 {
         let pattern = format!("%{}%", q);
 
         let rows = sqlx::query!(
@@ -93,9 +93,26 @@ pub async fn handle(
             }
         }
 
-        (players, teams)
+        let league_rows = sqlx::query!(
+            r#"SELECT DISTINCT data->'home'->>'league' as league FROM games
+               WHERE data->'home'->>'league' ILIKE $1
+               UNION
+               SELECT DISTINCT data->'away'->>'league' as league FROM games
+               WHERE data->'away'->>'league' ILIKE $1
+               ORDER BY 1"#,
+            &pattern,
+        )
+        .fetch_all(&*state.pool)
+        .await?;
+
+        let leagues: Vec<String> = league_rows
+            .iter()
+            .filter_map(|r| r.league.clone())
+            .collect();
+
+        (players, teams, leagues)
     } else {
-        (vec![], vec![])
+        (vec![], vec![], vec![])
     };
 
     let tmpl = state.env.get_template("search.html")?;
@@ -103,6 +120,7 @@ pub async fn handle(
         query => q,
         players => players,
         teams => teams,
+        leagues => leagues,
     })?;
     Ok(Html(html))
 }

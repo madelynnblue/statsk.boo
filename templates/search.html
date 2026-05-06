@@ -11,8 +11,8 @@
       <tr>
         <td><a href="/player?league={{ p.league | urlencode }}&name={{ p.name | urlencode }}&number={{ p.number | urlencode }}">{{ p.name }}</a></td>
         <td>{{ p.number }}</td>
-        <td>{{ p.team }}</td>
-        <td>{{ p.league }}</td>
+        <td><a href="/team?league={{ p.league | urlencode }}&team={{ p.team | urlencode }}">{{ p.team }}</a></td>
+        <td><a href="/league?league={{ p.league | urlencode }}">{{ p.league }}</a></td>
       </tr>
     {% endfor %}
     </tbody>
@@ -29,13 +29,24 @@
     {% for t in teams %}
       <tr>
         <td><a href="/team?league={{ t.league | urlencode }}&team={{ t.team | urlencode }}">{{ t.team }}</a></td>
-        <td>{{ t.league }}</td>
+        <td><a href="/league?league={{ t.league | urlencode }}">{{ t.league }}</a></td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
   {% else %}
   <p>No teams found for "{{ query }}".</p>
+  {% endif %}
+
+  <h2>Leagues</h2>
+  {% if leagues %}
+  <ul>
+    {% for l in leagues %}
+    <li><a href="/league?league={{ l | urlencode }}">{{ l }}</a></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>No leagues found for "{{ query }}".</p>
   {% endif %}
 {% else %}
 <p>Enter at least 2 characters to search.</p>

@@ -1,5 +1,6 @@
 pub mod game;
 pub mod index;
+pub mod league;
 pub mod player;
 pub mod search;
 pub mod team;
