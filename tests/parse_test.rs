@@ -17,4 +17,11 @@ fn test_parse_testsheet() {
     let away_total = game.total_score("away");
     assert!(home_total >= 0, "negative home score: {home_total}");
     assert!(away_total >= 0, "negative away score: {away_total}");
+
+    // Game summary should be present
+    let gs = game.game_summary.as_ref().expect("game summary missing");
+    assert!(!gs.home_players.is_empty(), "home summary players empty");
+    assert!(!gs.away_players.is_empty(), "away summary players empty");
+    assert!(gs.home_totals.jams_total.is_some(), "home totals missing");
+    assert!(gs.away_totals.jams_total.is_some(), "away totals missing");
 }

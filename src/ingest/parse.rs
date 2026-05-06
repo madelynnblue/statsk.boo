@@ -20,6 +20,7 @@ pub fn parse_statsbook_with_date(bytes: &[u8]) -> Result<(GameData, Option<chron
     let mut periods = parse_scores(&mut wb)?;
     merge_lineups(&mut wb, &mut periods)?;
     let penalties = parse_penalties(&mut wb)?;
+    let game_summary = parse_game_summary(&mut wb).ok();
 
     let game = GameData {
         version,
@@ -30,6 +31,7 @@ pub fn parse_statsbook_with_date(bytes: &[u8]) -> Result<(GameData, Option<chron
         away,
         periods,
         penalties,
+        game_summary,
     };
     Ok((game, date))
 }
@@ -39,7 +41,7 @@ fn cell_str(r: &Range<Data>, row: u32, col: u32) -> Option<String> {
     match data {
         Data::String(s) => {
             let t = s.trim();
-            if t.is_empty() {
+            if t.is_empty() || t.eq_ignore_ascii_case("none") {
                 None
             } else {
                 Some(t.to_string())
@@ -297,4 +299,148 @@ fn parse_penalties<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Result
         }
     }
     Ok(penalties)
+}
+
+fn parse_game_summary<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Result<GameSummary> {
+    let sheet = wb
+        .worksheet_range("Game Summary")
+        .context("no Game Summary sheet")?;
+    let home_players = (5u32..=19)
+        .filter_map(|row| parse_summary_player(&sheet, row))
+        .collect();
+    let away_players = (27u32..=41)
+        .filter_map(|row| parse_summary_player(&sheet, row))
+        .collect();
+    Ok(GameSummary {
+        home_totals: parse_summary_totals(&sheet, 25),
+        away_totals: parse_summary_totals(&sheet, 47),
+        home_players,
+        away_players,
+    })
+}
+
+fn parse_summary_player(sheet: &Range<Data>, row: u32) -> Option<SummaryPlayer> {
+    let number = cell_str(sheet, row, 0)?;
+    let name = cell_str(sheet, row, 1).unwrap_or_default();
+    Some(SummaryPlayer {
+        number,
+        name,
+        jams_jammer: cell_opt_u8(sheet, row, 2),
+        jams_pivot: cell_opt_u8(sheet, row, 3),
+        jams_blocker: cell_opt_u8(sheet, row, 4),
+        jams_total: cell_opt_u8(sheet, row, 5),
+        jams_pct: cell_opt_f32(sheet, row, 6),
+        jammer_points: cell_opt_i16(sheet, row, 7),
+        ppj: cell_opt_f32(sheet, row, 8),
+        lost: cell_opt_u8(sheet, row, 9),
+        lead: cell_opt_u8(sheet, row, 10),
+        called: cell_opt_u8(sheet, row, 11),
+        no_initial_trip: cell_opt_u8(sheet, row, 12),
+        star_passes: cell_opt_u8(sheet, row, 13),
+        lead_pct: cell_opt_f32(sheet, row, 14),
+        lead_plus_minus: cell_opt_i16(sheet, row, 15),
+        avg_lead_plus_minus: cell_opt_f32(sheet, row, 16),
+        pts_for: cell_opt_i16(sheet, row, 17),
+        pts_against: cell_opt_i16(sheet, row, 18),
+        plus_minus: cell_opt_i16(sheet, row, 19),
+        jammer_plus_minus: cell_opt_i16(sheet, row, 20),
+        avg_jammer_plus_minus: cell_opt_f32(sheet, row, 21),
+        pivot_plus_minus: cell_opt_i16(sheet, row, 22),
+        avg_pivot_plus_minus: cell_opt_f32(sheet, row, 23),
+        block_plus_minus: cell_opt_i16(sheet, row, 24),
+        avg_block_plus_minus: cell_opt_f32(sheet, row, 25),
+        pack_plus_minus: cell_opt_i16(sheet, row, 26),
+        avg_pack_plus_minus: cell_opt_f32(sheet, row, 27),
+        avg_plus_minus: cell_opt_f32(sheet, row, 28),
+        vtar_pts_for: cell_opt_f32(sheet, row, 29),
+        vtar_pts_against: cell_opt_f32(sheet, row, 30),
+        vtar_total_plus_minus: cell_opt_f32(sheet, row, 31),
+        vtar_jammer_avg_plus_minus: cell_opt_f32(sheet, row, 32),
+        vtar_pivot_avg_plus_minus: cell_opt_f32(sheet, row, 33),
+        vtar_blocker_avg_plus_minus: cell_opt_f32(sheet, row, 34),
+        vtar_pack_avg_plus_minus: cell_opt_f32(sheet, row, 35),
+        total_vtar_avg_plus_minus: cell_opt_f32(sheet, row, 36),
+        penalty_count: cell_opt_u8(sheet, row, 37),
+    })
+}
+
+fn parse_summary_totals(sheet: &Range<Data>, row: u32) -> SummaryTotals {
+    SummaryTotals {
+        jams_jammer: cell_opt_u8(sheet, row, 2),
+        jams_pivot: cell_opt_u8(sheet, row, 3),
+        jams_blocker: cell_opt_u8(sheet, row, 4),
+        jams_total: cell_opt_u16(sheet, row, 5),
+        jams_pct: cell_opt_f32(sheet, row, 6),
+        jammer_points: cell_opt_i16(sheet, row, 7),
+        ppj: cell_opt_f32(sheet, row, 8),
+        lost: cell_opt_u8(sheet, row, 9),
+        lead: cell_opt_u8(sheet, row, 10),
+        called: cell_opt_u8(sheet, row, 11),
+        no_initial_trip: cell_opt_u8(sheet, row, 12),
+        star_passes: cell_opt_u8(sheet, row, 13),
+        lead_pct: cell_opt_f32(sheet, row, 14),
+        lead_plus_minus: cell_opt_i16(sheet, row, 15),
+        avg_lead_plus_minus: cell_opt_f32(sheet, row, 16),
+        pts_for: cell_opt_f32(sheet, row, 17),
+        pts_against: cell_opt_f32(sheet, row, 18),
+        plus_minus: cell_opt_f32(sheet, row, 19),
+        jammer_plus_minus: cell_opt_f32(sheet, row, 20),
+        avg_jammer_plus_minus: cell_opt_f32(sheet, row, 21),
+        pivot_plus_minus: cell_opt_f32(sheet, row, 22),
+        avg_pivot_plus_minus: cell_opt_f32(sheet, row, 23),
+        block_plus_minus: cell_opt_f32(sheet, row, 24),
+        avg_block_plus_minus: cell_opt_f32(sheet, row, 25),
+        pack_plus_minus: cell_opt_f32(sheet, row, 26),
+        avg_pack_plus_minus: cell_opt_f32(sheet, row, 27),
+        avg_plus_minus: cell_opt_f32(sheet, row, 28),
+        vtar_pts_for: cell_opt_f32(sheet, row, 29),
+        vtar_pts_against: cell_opt_f32(sheet, row, 30),
+        vtar_total_plus_minus: cell_opt_f32(sheet, row, 31),
+        vtar_jammer_avg_plus_minus: cell_opt_f32(sheet, row, 32),
+        vtar_pivot_avg_plus_minus: cell_opt_f32(sheet, row, 33),
+        vtar_blocker_avg_plus_minus: cell_opt_f32(sheet, row, 34),
+        vtar_pack_avg_plus_minus: cell_opt_f32(sheet, row, 35),
+        total_vtar_avg_plus_minus: cell_opt_f32(sheet, row, 36),
+        penalty_count: cell_opt_u8(sheet, row, 37),
+    }
+}
+
+fn cell_opt_i16(sheet: &Range<Data>, row: u32, col: u32) -> Option<i16> {
+    match sheet.get_value((row, col))? {
+        Data::String(s) if s.trim().eq_ignore_ascii_case("none") => None,
+        Data::String(s) => s.trim().parse().ok(),
+        Data::Float(f) => Some(f.round() as i16),
+        Data::Int(i) => Some(*i as i16),
+        _ => None,
+    }
+}
+
+fn cell_opt_u8(sheet: &Range<Data>, row: u32, col: u32) -> Option<u8> {
+    match sheet.get_value((row, col))? {
+        Data::String(s) if s.trim().eq_ignore_ascii_case("none") => None,
+        Data::String(s) => s.trim().parse().ok(),
+        Data::Float(f) => Some(f.round() as u8),
+        Data::Int(i) => Some(*i as u8),
+        _ => None,
+    }
+}
+
+fn cell_opt_u16(sheet: &Range<Data>, row: u32, col: u32) -> Option<u16> {
+    match sheet.get_value((row, col))? {
+        Data::String(s) if s.trim().eq_ignore_ascii_case("none") => None,
+        Data::String(s) => s.trim().parse().ok(),
+        Data::Float(f) => Some(f.round() as u16),
+        Data::Int(i) => Some(*i as u16),
+        _ => None,
+    }
+}
+
+fn cell_opt_f32(sheet: &Range<Data>, row: u32, col: u32) -> Option<f32> {
+    match sheet.get_value((row, col))? {
+        Data::String(s) if s.trim().eq_ignore_ascii_case("none") => None,
+        Data::String(s) => s.trim().parse().ok(),
+        Data::Float(f) => Some(*f as f32),
+        Data::Int(i) => Some(*i as f32),
+        _ => None,
+    }
 }
