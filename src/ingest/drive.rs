@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
-use reqwest::header;
+use chrono::{DateTime, Utc};
 use reqwest::Client;
+use reqwest::header;
 use serde::Deserialize;
+use std::path::Path;
 
 #[derive(Debug, Deserialize)]
 pub struct DriveFile {
@@ -9,6 +11,30 @@ pub struct DriveFile {
     pub name: String,
     #[serde(rename = "modifiedTime")]
     pub modified_time: String,
+}
+
+impl DriveFile {
+    pub fn from_local(path: &Path, root: &Path) -> Result<Self> {
+        let rel = path.strip_prefix(root).with_context(|| {
+            format!("path {} not under root {}", path.display(), root.display())
+        })?;
+        let id = rel.to_string_lossy().to_string();
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| id.clone());
+        let meta = std::fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
+        let mtime = meta
+            .modified()
+            .with_context(|| format!("mtime {}", path.display()))?;
+        let modified_time =
+            DateTime::<Utc>::from(mtime).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        Ok(Self {
+            id,
+            name,
+            modified_time,
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -23,11 +49,7 @@ pub struct DriveClient {
     api_key: String,
 }
 
-static APP_USER_AGENT: &str = concat!(
-    env!("CARGO_PKG_NAME"),
-    "/",
-    env!("CARGO_PKG_VERSION"),
-);
+static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
 impl DriveClient {
     pub fn new(api_key: String) -> Self {

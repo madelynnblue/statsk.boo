@@ -3,32 +3,118 @@ pub mod parse;
 
 use crate::config::Config;
 use crate::models::{GameData, periods_score};
+use anyhow::Context;
 use chrono::{DateTime, NaiveDate, Utc};
 use drive::DriveClient;
+use drive::DriveFile;
 use serde::Serialize;
 use sqlx::PgPool;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
+struct LocalSource {
+    root: PathBuf,
+}
+
+impl LocalSource {
+    fn new(root: PathBuf) -> Self {
+        Self { root }
+    }
+
+    fn list_xlsx_since(&self, since: &str) -> anyhow::Result<Vec<DriveFile>> {
+        let since_dt = chrono::DateTime::parse_from_rfc3339(since)
+            .with_context(|| format!("parsing since timestamp: {since}"))?;
+        let mut files = Vec::new();
+        visit_dir(&self.root, &self.root, &since_dt, &mut files)?;
+        Ok(files)
+    }
+
+    fn read_file(&self, relative_path: &str) -> anyhow::Result<Vec<u8>> {
+        let path = self.root.join(relative_path);
+        std::fs::read(&path).with_context(|| format!("reading {}", path.display()))
+    }
+}
+
+fn visit_dir(
+    root: &std::path::Path,
+    dir: &std::path::Path,
+    since: &chrono::DateTime<chrono::FixedOffset>,
+    files: &mut Vec<DriveFile>,
+) -> anyhow::Result<()> {
+    for entry in std::fs::read_dir(dir).with_context(|| format!("reading dir {}", dir.display()))? {
+        let entry = entry.with_context(|| format!("entry in {}", dir.display()))?;
+        let path = entry.path();
+        if path.is_dir() {
+            visit_dir(root, &path, since, files)?;
+        } else if path.extension().map_or(false, |e| e == "xlsx") {
+            let df = DriveFile::from_local(&path, root)?;
+            let mtime = chrono::DateTime::parse_from_rfc3339(&df.modified_time)
+                .unwrap_or_else(|_| chrono::DateTime::UNIX_EPOCH.fixed_offset());
+            if mtime > *since {
+                files.push(df);
+            }
+        }
+    }
+    Ok(())
+}
+
+enum FileSource {
+    Drive(DriveClient),
+    Local(LocalSource),
+}
+
+impl FileSource {
+    async fn list_xlsx_since(
+        &self,
+        folder_id: &str,
+        since: &str,
+    ) -> anyhow::Result<Vec<DriveFile>> {
+        match self {
+            FileSource::Drive(c) => c.list_xlsx_since(folder_id, since).await,
+            FileSource::Local(s) => s.list_xlsx_since(since),
+        }
+    }
+
+    async fn read_file(&self, file_id: &str) -> anyhow::Result<Vec<u8>> {
+        match self {
+            FileSource::Drive(c) => c.download_file(file_id).await,
+            FileSource::Local(s) => s.read_file(file_id),
+        }
+    }
+}
+
 pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
     info!("ingest loop starting");
-    let client = DriveClient::new(cfg.google_api_key.clone());
+    let source = if let Some(ref dir) = cfg.ingest_dir {
+        let root = PathBuf::from(dir);
+        if !root.is_dir() {
+            panic!("INGEST_DIR is not a directory: {dir}");
+        }
+        FileSource::Local(LocalSource::new(root))
+    } else {
+        FileSource::Drive(DriveClient::new(
+            cfg.google_api_key
+                .clone()
+                .expect("GOOGLE_API_KEY required when INGEST_DIR not set"),
+        ))
+    };
 
-    match reingest_stale(&pool, &client).await {
+    match reingest_stale(&pool, &source).await {
         Ok(n) if n > 0 => info!("re-ingested {n} stale game(s)"),
         Err(e) => error!("re-ingest of stale games failed: {e:#}"),
         _ => {}
     }
 
     loop {
-        if let Err(e) = run_ingest(&cfg, &pool, &client).await {
+        if let Err(e) = run_ingest(&cfg, &pool, &source).await {
             error!("ingest run failed: {e:#}");
         }
         tokio::time::sleep(cfg.ingest_interval).await;
     }
 }
 
-async fn run_ingest(cfg: &Config, pool: &PgPool, client: &DriveClient) -> anyhow::Result<()> {
+async fn run_ingest(cfg: &Config, pool: &PgPool, source: &FileSource) -> anyhow::Result<()> {
     let last_ingest = last_ingest_at(pool)
         .await?
         .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::weeks(1));
@@ -36,7 +122,7 @@ async fn run_ingest(cfg: &Config, pool: &PgPool, client: &DriveClient) -> anyhow
     let jitter = chrono::Duration::from_std(cfg.ingest_jitter).unwrap_or_default();
     let since = (last_ingest - jitter).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     info!("ingesting files since {since}");
-    let files = client
+    let files = source
         .list_xlsx_since(&cfg.google_drive_folder_id, &since)
         .await?;
 
@@ -44,7 +130,7 @@ async fn run_ingest(cfg: &Config, pool: &PgPool, client: &DriveClient) -> anyhow
 
     for file in files {
         info!("ingesting {}", file.name);
-        match process_file(pool, client, &file).await {
+        match process_file(pool, source, &file).await {
             Ok(true) => info!("ingested {}", file.name),
             Ok(false) => info!("skipped {} (already present)", file.name),
             Err(e) => warn!("skipping {}: {e:#}", file.name),
@@ -62,8 +148,8 @@ async fn last_ingest_at(pool: &PgPool) -> anyhow::Result<Option<chrono::DateTime
 
 async fn process_file(
     pool: &PgPool,
-    client: &DriveClient,
-    file: &drive::DriveFile,
+    source: &FileSource,
+    file: &DriveFile,
 ) -> anyhow::Result<bool> {
     let modified_time: DateTime<Utc> = file.modified_time.parse()?;
 
@@ -82,7 +168,7 @@ async fn process_file(
         return Ok(false);
     }
 
-    insert_parsed_file(pool, client, &file.id, &file.name, modified_time).await?;
+    insert_parsed_file(pool, source, &file.id, &file.name, modified_time).await?;
     Ok(true)
 }
 
@@ -127,12 +213,12 @@ fn build_fingerprint(game: &GameData, date: Option<NaiveDate>) -> anyhow::Result
 
 async fn insert_parsed_file(
     pool: &PgPool,
-    client: &DriveClient,
+    source: &FileSource,
     file_id: &str,
     file_name: &str,
     modified_time: DateTime<Utc>,
 ) -> anyhow::Result<()> {
-    let bytes = client.download_file(file_id).await?;
+    let bytes = source.read_file(file_id).await?;
     let (game, date) = parse::parse_statsbook_with_date(&bytes)
         .map_err(|e| anyhow::anyhow!("parse error in {file_name}: {e:#}"))?;
 
@@ -273,7 +359,7 @@ async fn insert_parsed_file(
     Ok(())
 }
 
-async fn reingest_stale(pool: &PgPool, client: &DriveClient) -> anyhow::Result<usize> {
+async fn reingest_stale(pool: &PgPool, source: &FileSource) -> anyhow::Result<usize> {
     let rows = sqlx::query!(
         "SELECT drive_file_id, modified_time FROM games WHERE parser_version < $1",
         parse::PARSER_VERSION
@@ -300,7 +386,7 @@ async fn reingest_stale(pool: &PgPool, client: &DriveClient) -> anyhow::Result<u
         );
         match insert_parsed_file(
             pool,
-            client,
+            source,
             &row.drive_file_id,
             &row.drive_file_id,
             row.modified_time,
