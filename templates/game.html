@@ -2,14 +2,16 @@
 {% block title %}{{ game.home.team | default("Home") }} vs {{ game.away.team | default("Away") }}{% endblock %}
 {% block content %}
 <style>
-  table.summary th, table.summary td { padding: 1px 3px; border: 1px solid #ccc; }
+  table.summary th, table.summary td { padding: 1px 3px; border: 1px solid var(--border); }
   table.summary thead th { writing-mode: vertical-rl; text-orientation: mixed; transform: rotate(180deg); white-space: nowrap; }
   .summary-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .summary th:nth-child(1), .summary td:nth-child(1) { position: sticky; left: 0; z-index: 2; background: #fff; }
-  .summary th:nth-child(2), .summary td:nth-child(2) { position: sticky; left: 2.8em; z-index: 2; background: #fff; }
-  .summary thead th:nth-child(1), .summary thead th:nth-child(2) { z-index: 3; }
-  .hl { background: #f0f4ff; }
-  thead .hl { background: #e0e8f8; }
+  .summary th:nth-child(1), .summary td:nth-child(1) { position: sticky; left: 0; z-index: 2; background: var(--sticky-bg); }
+  .summary th:nth-child(2), .summary td:nth-child(2) { position: sticky; left: 2.8em; z-index: 2; background: var(--sticky-bg); }
+  .summary tbody tr:nth-child(even) td:nth-child(1),
+  .summary tbody tr:nth-child(even) td:nth-child(2) { background: var(--tr-even); }
+  .summary thead th:nth-child(1), .summary thead th:nth-child(2) { z-index: 3; background: var(--th-bg); }
+  .hl { background: var(--hl); }
+  thead .hl { background: var(--hl-head); }
 </style>
 <h1>{{ game.home.team | default("Home") }} vs {{ game.away.team | default("Away") }}</h1>
 <p><a href="https://drive.google.com/file/d/{{ file_id }}/view" target="_blank">View statsbook on Google Drive</a></p>

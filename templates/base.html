@@ -5,24 +5,37 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}WSB{% endblock %} — WFTDA Stats Browser</title>
   <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #fff; --fg: #222; --border: #ddd; --th-bg: #f5f5f5; --tr-even: #fafafa;
+      --accent: #c00; --link: #0066cc; --muted: #666; --card-bg: #f5f5f5;
+      --input-border: #ccc; --sticky-bg: #fff; --hl: #f0f4ff; --hl-head: #e0e8f8;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1a1a1a; --fg: #ddd; --border: #444; --th-bg: #2a2a2a; --tr-even: #202020;
+        --accent: #ff5555; --link: #5599ff; --muted: #999; --card-bg: #252525;
+        --input-border: #555; --sticky-bg: #1a1a1a; --hl: #1e2540; --hl-head: #182038;
+      }
+    }
     *, *::before, *::after { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 0 auto; padding: 1rem; color: #222; }
-    header { border-bottom: 2px solid #c00; padding-bottom: 0.5rem; margin-bottom: 1.5rem; }
-    header a { text-decoration: none; color: #c00; font-weight: bold; font-size: 1.2rem; }
+    body { font-family: system-ui, sans-serif; max-width: 1100px; margin: 0 auto; padding: 1rem; color: var(--fg); background: var(--bg); }
+    header { border-bottom: 2px solid var(--accent); padding-bottom: 0.5rem; margin-bottom: 1.5rem; }
+    header a { text-decoration: none; color: var(--accent); font-weight: bold; font-size: 1.2rem; }
     .search-row { display: flex; gap: 0.5rem; margin: 1rem 0; }
-    .search-row input { flex: 1; padding: 0.5rem; font-size: 1rem; border: 1px solid #ccc; border-radius: 3px; }
-    .search-row button { padding: 0.5rem 1.2rem; background: #c00; color: #fff; border: none; border-radius: 3px; cursor: pointer; font-size: 1rem; }
+    .search-row input { flex: 1; padding: 0.5rem; font-size: 1rem; border: 1px solid var(--input-border); border-radius: 3px; background: var(--bg); color: var(--fg); }
+    .search-row button { padding: 0.5rem 1.2rem; background: var(--accent); color: #fff; border: none; border-radius: 3px; cursor: pointer; font-size: 1rem; }
     table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
-    th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; }
-    th { background: #f5f5f5; }
-    tr:nth-child(even) { background: #fafafa; }
-    a { color: #0066cc; }
+    th, td { border: 1px solid var(--border); padding: 0.4rem 0.6rem; text-align: left; }
+    th { background: var(--th-bg); }
+    tr:nth-child(even) { background: var(--tr-even); }
+    a { color: var(--link); }
     h1 { margin-top: 0; }
-    h2 { color: #c00; }
+    h2 { color: var(--accent); }
     .stat { font-size: 1.5rem; font-weight: bold; }
-    .stat-label { font-size: 0.85rem; color: #666; }
+    .stat-label { font-size: 0.85rem; color: var(--muted); }
     .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 1rem; margin: 1rem 0; }
-    .stat-card { background: #f5f5f5; padding: 0.75rem 1rem; border-radius: 4px; }
+    .stat-card { background: var(--card-bg); padding: 0.75rem 1rem; border-radius: 4px; }
   </style>
 </head>
 <body>
