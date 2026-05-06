@@ -1,4 +1,6 @@
-use crate::models::{Period, periods_score};
+use std::collections::HashMap;
+
+use crate::models::{Period, SideStats, SummaryPlayer, periods_score};
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
 use axum::response::Html;
@@ -26,6 +28,15 @@ struct GameRow {
     jams_as_blocker: u16,
     score: String,
     outcome: String,
+}
+
+#[derive(Serialize)]
+struct GameSummaryEntry {
+    drive_file_id: String,
+    date: String,
+    opponent_team: String,
+    opponent_league: String,
+    stats: SummaryPlayer,
 }
 
 #[derive(Serialize)]
@@ -146,6 +157,43 @@ pub async fn handle(
         });
     }
 
+    let file_ids: Vec<String> = rows.iter().map(|r| r.drive_file_id.clone()).collect();
+    let mut game_summary_rows: Vec<GameSummaryEntry> = Vec::new();
+
+    if !file_ids.is_empty() {
+        let summary_rows = sqlx::query!(
+            r#"SELECT drive_file_id, side as "side!: String", stats
+               FROM game_summary WHERE drive_file_id = ANY($1)"#,
+            &file_ids,
+        )
+        .fetch_all(&*state.pool)
+        .await?;
+
+        let mut summary_map: HashMap<(String, String), Vec<SummaryPlayer>> = HashMap::new();
+        for r in summary_rows {
+            let side_stats: SideStats =
+                serde_json::from_value(r.stats).map_err(anyhow::Error::from)?;
+            summary_map.insert((r.drive_file_id, r.side), side_stats.players);
+        }
+
+        for (row, game_row) in rows.iter().zip(game_rows.iter()) {
+            let key = (row.drive_file_id.clone(), row.side.clone());
+            if let Some(players) = summary_map.get(&key) {
+                // Match by number only: numbers are unique within a team, and name
+                // normalization may differ between the IGRF roster and summary sheet.
+                if let Some(stats) = players.iter().find(|p| p.number == params.number) {
+                    game_summary_rows.push(GameSummaryEntry {
+                        drive_file_id: row.drive_file_id.clone(),
+                        date: game_row.date.clone(),
+                        opponent_team: game_row.opponent_team.clone(),
+                        opponent_league: game_row.opponent_league.clone(),
+                        stats: stats.clone(),
+                    });
+                }
+            }
+        }
+    }
+
     let tmpl = state.env.get_template("player.html")?;
     let html = tmpl.render(minijinja::context! {
         league => params.league,
@@ -153,6 +201,7 @@ pub async fn handle(
         number => params.number,
         career => career,
         games  => game_rows,
+        game_summary_rows => game_summary_rows,
     })?;
     Ok(Html(html))
 }

@@ -1,6 +1,21 @@
 {% extends "base.html" %}
 {% block title %}{{ name }} #{{ number }}{% endblock %}
 {% block content %}
+<style>
+  table.summary th, table.summary td { padding: 1px 3px; border: 1px solid var(--border); }
+  table.summary thead th { writing-mode: vertical-rl; text-orientation: mixed; transform: rotate(180deg); white-space: nowrap; }
+  .summary-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .summary th:nth-child(1), .summary td:nth-child(1) { position: sticky; left: 0; z-index: 2; background: var(--sticky-bg); }
+  .summary th:nth-child(2), .summary td:nth-child(2) { position: sticky; left: 4.5em; z-index: 2; background: var(--sticky-bg); }
+  .summary tbody tr:nth-child(even) td:nth-child(1),
+  .summary tbody tr:nth-child(even) td:nth-child(2) { background: var(--tr-even); }
+  .summary thead th:nth-child(1), .summary thead th:nth-child(2) { z-index: 3; background: var(--th-bg); }
+  .hl { background: var(--hl); }
+  thead .hl { background: var(--hl-head); }
+</style>
+{% macro fmt2(val) %}{% if val is not none %}{{ "%.2f" | format(val) }}{% endif %}{% endmacro %}
+{% macro fmtpct(val) %}{% if val is not none %}{{ "%.2f" | format(val * 100) }}%{% endif %}{% endmacro %}
+{% macro intz(val) %}{% if val is not none and val != 0 %}{{ val }}{% endif %}{% endmacro %}
 <h1>{{ name }} <small>#{{ number }}</small></h1>
 <p><a href="/league?league={{ league | urlencode }}">{{ league }}</a></p>
 
@@ -32,5 +47,71 @@
 </table>
 {% else %}
 <p>No games found.</p>
+{% endif %}
+
+{% if game_summary_rows %}
+<h2>Game Summaries</h2>
+<div class="summary-scroll">
+  <table class="summary" style="width:100%;border-collapse:collapse;font-size:0.65em;white-space:nowrap">
+    <thead><tr>
+      <th>Date</th><th>Opponent</th><th>JAMMER</th><th>PIVOT</th><th>BLOCKER</th><th class="hl">TOTAL</th>
+      <th class="hl">% JAMS SKATED</th><th class="hl">POINTS</th><th class="hl">PPJ</th><th>LOST</th><th class="hl">LEAD</th>
+      <th>CALLED</th><th>NO INITIAL TRIP</th><th>STAR PASSES RECEIVED</th><th class="hl">LEAD %</th>
+      <th>LEAD +/-</th><th>AVERAGE LEAD +/-</th><th>PTS FOR</th><th>PTS AGAINST</th>
+      <th class="hl">TOTAL +/-</th><th>JAMMER +/-</th><th>AVERAGE JAMMER +/-</th>
+      <th>PIVOT +/-</th><th>AVERAGE PIVOT +/-</th><th>BLOCK +/-</th>
+      <th>AVERAGE BLOCKER +/-</th><th>PACK +/-</th><th>AVERAGE PACK +/-</th>
+      <th class="hl">AVG +/-</th><th>VTAR PTS FOR</th><th>VTAR PTS AGAINST</th>
+      <th class="hl">VTAR TOTAL +/-</th><th>VTAR JAMMER AVG +/-</th><th>VTAR PIVOT AVG +/-</th>
+      <th>VTAR BLOCKER AVG +/-</th><th>VTAR PACK AVG +/-</th>
+      <th class="hl">TOTAL VTAR AVG +/-</th><th class="hl">SKATERS PENALTY COUNT</th>
+    </tr></thead>
+    <tbody>
+    {% for g in game_summary_rows %}
+      {% set p = g.stats %}
+      <tr>
+        <td><a href="/game/{{ g.drive_file_id }}">{{ g.date }}</a></td>
+        <td><a href="/team?league={{ g.opponent_league | urlencode }}&team={{ g.opponent_team | urlencode }}">{{ g.opponent_team }}</a><br><small>{{ g.opponent_league }}</small></td>
+        <td>{{ p.jams_jammer | default("") }}</td>
+        <td>{{ p.jams_pivot | default("") }}</td>
+        <td>{{ p.jams_blocker | default("") }}</td>
+        <td class="hl">{{ p.jams_total | default("") }}</td>
+        <td class="hl">{% if p.jams_pct is not none %}{{ "%.0f" | format(p.jams_pct * 100) }}%{% endif %}</td>
+        <td class="hl">{{ intz(p.jammer_points) }}</td>
+        <td class="hl">{{ fmt2(p.ppj) }}</td>
+        <td>{{ intz(p.lost) }}</td>
+        <td class="hl">{{ intz(p.lead) }}</td>
+        <td>{{ intz(p.called) }}</td>
+        <td>{{ intz(p.no_initial_trip) }}</td>
+        <td>{{ intz(p.star_passes) }}</td>
+        <td class="hl">{{ fmtpct(p.lead_pct) }}</td>
+        <td>{{ intz(p.lead_plus_minus) }}</td>
+        <td>{{ fmt2(p.avg_lead_plus_minus) }}</td>
+        <td>{{ intz(p.pts_for) }}</td>
+        <td>{{ intz(p.pts_against) }}</td>
+        <td class="hl">{{ intz(p.plus_minus) }}</td>
+        <td>{{ intz(p.jammer_plus_minus) }}</td>
+        <td>{{ fmt2(p.avg_jammer_plus_minus) }}</td>
+        <td>{{ intz(p.pivot_plus_minus) }}</td>
+        <td>{{ fmt2(p.avg_pivot_plus_minus) }}</td>
+        <td>{{ intz(p.block_plus_minus) }}</td>
+        <td>{{ fmt2(p.avg_block_plus_minus) }}</td>
+        <td>{{ intz(p.pack_plus_minus) }}</td>
+        <td>{{ fmt2(p.avg_pack_plus_minus) }}</td>
+        <td class="hl">{{ fmt2(p.avg_plus_minus) }}</td>
+        <td>{{ fmt2(p.vtar_pts_for) }}</td>
+        <td>{{ fmt2(p.vtar_pts_against) }}</td>
+        <td class="hl">{{ fmt2(p.vtar_total_plus_minus) }}</td>
+        <td>{{ fmt2(p.vtar_jammer_avg_plus_minus) }}</td>
+        <td>{{ fmt2(p.vtar_pivot_avg_plus_minus) }}</td>
+        <td>{{ fmt2(p.vtar_blocker_avg_plus_minus) }}</td>
+        <td>{{ fmt2(p.vtar_pack_avg_plus_minus) }}</td>
+        <td class="hl">{{ fmt2(p.total_vtar_avg_plus_minus) }}</td>
+        <td class="hl">{{ intz(p.penalty_count) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endif %}
 {% endblock %}
