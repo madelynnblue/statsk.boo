@@ -2,28 +2,30 @@
 {% block title %}{{ name }} #{{ number }}{% endblock %}
 {% block content %}
 <h1>{{ name }} <small>#{{ number }}</small></h1>
-<p>{{ league }}</p>
+<p><a href="/search?q={{ league | urlencode }}">{{ league }}</a></p>
 
 <h2>Career Stats</h2>
 <div class="stats-grid">
   <div class="stat-card"><div class="stat">{{ career.games }}</div><div class="stat-label">Games</div></div>
-  <div class="stat-card"><div class="stat">{{ career.jams_as_jammer }}</div><div class="stat-label">Jams as Jammer</div></div>
-  <div class="stat-card"><div class="stat">{{ career.points_as_jammer }}</div><div class="stat-label">Points as Jammer</div></div>
-  <div class="stat-card"><div class="stat">{{ career.total_penalties }}</div><div class="stat-label">Penalties</div></div>
+  <div class="stat-card"><div class="stat">{{ career.games_as_jammer }}</div><div class="stat-label">Games as Jammer</div></div>
+  <div class="stat-card"><div class="stat">{{ career.games_as_pivot }}</div><div class="stat-label">Games as Pivot</div></div>
+  <div class="stat-card"><div class="stat">{{ career.games_as_blocker }}</div><div class="stat-label">Games as Blocker</div></div>
 </div>
 
 <h2>Game History</h2>
 {% if games %}
 <table>
-  <thead><tr><th>Date</th><th>Opponent</th><th>Jams (J)</th><th>Pts (J)</th><th>Penalties</th></tr></thead>
+  <thead><tr><th>Date</th><th>Opponent</th><th>J-J</th><th>J-P</th><th>J-B</th><th>Score</th><th>Outcome</th></tr></thead>
   <tbody>
   {% for g in games %}
     <tr>
       <td><a href="/game/{{ g.drive_file_id }}">{{ g.date }}</a></td>
-      <td>{{ g.opponent_team }}<br><small>{{ g.opponent_league }}</small></td>
+      <td><a href="/team?league={{ g.opponent_league | urlencode }}&team={{ g.opponent_team | urlencode }}">{{ g.opponent_team }}</a><br><small>{{ g.opponent_league }}</small></td>
       <td>{{ g.jams_as_jammer }}</td>
-      <td>{{ g.points_as_jammer }}</td>
-      <td>{{ g.penalties }}</td>
+      <td>{{ g.jams_as_pivot }}</td>
+      <td>{{ g.jams_as_blocker }}</td>
+      <td>{{ g.score }}</td>
+      <td>{{ g.outcome }}</td>
     </tr>
   {% endfor %}
   </tbody>

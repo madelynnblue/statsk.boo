@@ -18,17 +18,22 @@ struct GameRow {
     opponent_team: String,
     opponent_league: String,
     side: String,
+    games_as_jammer: u16,
+    games_as_pivot: u16,
+    games_as_blocker: u16,
     jams_as_jammer: u16,
-    points_as_jammer: i16,
-    penalties: usize,
+    jams_as_pivot: u16,
+    jams_as_blocker: u16,
+    score: String,
+    outcome: String,
 }
 
 #[derive(Serialize)]
 struct CareerStats {
     games: usize,
-    jams_as_jammer: u32,
-    points_as_jammer: i32,
-    total_penalties: usize,
+    games_as_jammer: usize,
+    games_as_pivot: usize,
+    games_as_blocker: usize,
 }
 
 pub async fn handle(
@@ -59,9 +64,9 @@ pub async fn handle(
     let mut game_rows: Vec<GameRow> = Vec::new();
     let mut career = CareerStats {
         games: 0,
-        jams_as_jammer: 0,
-        points_as_jammer: 0,
-        total_penalties: 0,
+        games_as_jammer: 0,
+        games_as_pivot: 0,
+        games_as_blocker: 0,
     };
 
     for row in &rows {
@@ -88,43 +93,63 @@ pub async fn handle(
         let opponent_team = opponent.team.clone().unwrap_or_default();
         let opponent_league = opponent.league.clone().unwrap_or_default();
 
-        let jams_as_jammer = game
-            .periods
-            .iter()
-            .flat_map(|p| &p.jams)
-            .filter(|j| {
-                let js = if side == "home" { &j.home } else { &j.away };
-                js.jammer.as_deref() == Some(&params.number)
-            })
-            .count() as u16;
+        let mut games_as_jammer = false;
+        let mut games_as_pivot = false;
+        let mut games_as_blocker = false;
+        let mut jams_as_jammer = 0u16;
+        let mut jams_as_pivot = 0u16;
+        let mut jams_as_blocker = 0u16;
+        for jam in game.periods.iter().flat_map(|p| &p.jams) {
+            let js = if side == "home" { &jam.home } else { &jam.away };
+            let is_jammer = js.jammer.as_deref() == Some(&params.number);
+            let is_pivot = js
+                .lineup
+                .iter()
+                .any(|e| e.position == "pivot" && e.number == params.number);
+            let is_blocker = js
+                .lineup
+                .iter()
+                .any(|e| e.position == "blocker" && e.number == params.number);
+            games_as_jammer |= is_jammer;
+            games_as_pivot |= is_pivot;
+            games_as_blocker |= is_blocker;
+            if is_jammer {
+                jams_as_jammer += 1;
+            }
+            if is_pivot {
+                jams_as_pivot += 1;
+            }
+            if is_blocker {
+                jams_as_blocker += 1;
+            }
+        }
 
-        let points_as_jammer: i16 = game
-            .periods
-            .iter()
-            .flat_map(|p| &p.jams)
-            .filter(|j| {
-                let js = if side == "home" { &j.home } else { &j.away };
-                js.jammer.as_deref() == Some(&params.number)
-            })
-            .map(|j| {
-                if side == "home" {
-                    j.home.score
-                } else {
-                    j.away.score
-                }
-            })
-            .sum();
-
-        let penalties = game
-            .penalties
-            .iter()
-            .filter(|p| p.side == side && p.number == params.number)
-            .count();
+        let home_score = game.total_score("home");
+        let away_score = game.total_score("away");
+        let (our_score, their_score) = if side == "home" {
+            (home_score, away_score)
+        } else {
+            (away_score, home_score)
+        };
+        let score = format!("{}–{}", our_score, their_score);
+        let outcome = if our_score > their_score {
+            "W"
+        } else if our_score < their_score {
+            "L"
+        } else {
+            "T"
+        };
 
         career.games += 1;
-        career.jams_as_jammer += jams_as_jammer as u32;
-        career.points_as_jammer += points_as_jammer as i32;
-        career.total_penalties += penalties;
+        if games_as_jammer {
+            career.games_as_jammer += 1;
+        }
+        if games_as_pivot {
+            career.games_as_pivot += 1;
+        }
+        if games_as_blocker {
+            career.games_as_blocker += 1;
+        }
 
         game_rows.push(GameRow {
             drive_file_id: row.drive_file_id.clone(),
@@ -132,9 +157,14 @@ pub async fn handle(
             opponent_team,
             opponent_league,
             side: side.to_string(),
+            games_as_jammer: games_as_jammer as u16,
+            games_as_pivot: games_as_pivot as u16,
+            games_as_blocker: games_as_blocker as u16,
             jams_as_jammer,
-            points_as_jammer,
-            penalties,
+            jams_as_pivot,
+            jams_as_blocker,
+            score,
+            outcome: outcome.to_string(),
         });
     }
 
