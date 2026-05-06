@@ -86,16 +86,16 @@ fn cell_i16(r: &Range<Data>, row: u32, col: u32) -> i16 {
 }
 
 fn parse_version<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> String {
-    if let Ok(sheet) = wb.worksheet_range("Read Me") {
-        if let Some(v) = cell_str(&sheet, 2, 0) {
-            if let Some(m) = v
-                .split_whitespace()
-                .find(|s| s.len() == 4 && s.chars().all(|c| c.is_ascii_digit()))
-            {
-                return m.to_string();
-            }
-            return v;
+    if let Ok(sheet) = wb.worksheet_range("Read Me")
+        && let Some(v) = cell_str(&sheet, 2, 0)
+    {
+        if let Some(m) = v
+            .split_whitespace()
+            .find(|s| s.len() == 4 && s.chars().all(|c| c.is_ascii_digit()))
+        {
+            return m.to_string();
         }
+        return v;
     }
     "2018".to_string()
 }
@@ -205,7 +205,7 @@ fn parse_jam_side(sheet: &Range<Data>, row: u32, base_col: u32) -> JamSide {
 
 fn merge_lineups<R: std::io::Read + std::io::Seek>(
     wb: &mut Xlsx<R>,
-    periods: &mut Vec<Period>,
+    periods: &mut [Period],
 ) -> Result<()> {
     let sheet = match wb.worksheet_range("Lineups") {
         Ok(s) => s,
