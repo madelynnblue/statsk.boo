@@ -18,7 +18,7 @@
 <p>
   {{ date }}
   {% if game.venue.name %} · {{ game.venue.name }}{% endif %}
-  {% if game.venue.city %}, {{ game.venue.city }}{% endif %}
+  {%- if game.venue.city %}, {{ game.venue.city }}{% endif %}
   {% if game.tournament %} · {{ game.tournament }}{% endif %}
 </p>
 
