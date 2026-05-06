@@ -34,10 +34,10 @@ pub async fn handle(
     let (players, teams) = if q.len() >= 2 {
         let pattern = format!("%{}%", q);
 
-        let rows = sqlx::query_as::<_, GameRow>(
+        let rows = sqlx::query!(
             "SELECT data FROM games WHERE player_search ILIKE $1 ORDER BY date DESC LIMIT 200",
+            &pattern,
         )
-        .bind(&pattern)
         .fetch_all(&*state.pool).await?;
 
         let mut seen_players: HashSet<(String, String, String)> = HashSet::new();
@@ -65,10 +65,10 @@ pub async fn handle(
             }
         }
 
-        let team_rows = sqlx::query_as::<_, GameRow>(
+        let team_rows = sqlx::query!(
             "SELECT data FROM games WHERE team_search ILIKE $1 ORDER BY date DESC LIMIT 200",
+            &pattern,
         )
-        .bind(&pattern)
         .fetch_all(&*state.pool).await?;
 
         let mut seen_teams: HashSet<(String, String)> = HashSet::new();
@@ -103,10 +103,4 @@ pub async fn handle(
         teams => teams,
     })?;
     Ok(Html(html))
-}
-
-// Helper struct for sqlx row
-#[derive(sqlx::FromRow)]
-struct GameRow {
-    data: serde_json::Value,
 }

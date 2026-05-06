@@ -33,24 +33,21 @@ pub async fn handle(
     State(state): State<AppState>,
     Query(params): Query<TeamParams>,
 ) -> Result<Html<String>, AppError> {
-    use sqlx::Row;
-
-    let rows = sqlx::query(
+    let rows = sqlx::query!(
         r#"SELECT drive_file_id, date, data::text as data_text FROM games
            WHERE data @> jsonb_build_object('home', jsonb_build_object('league', $1::text, 'team', $2::text))
               OR data @> jsonb_build_object('away', jsonb_build_object('league', $1::text, 'team', $2::text))
            ORDER BY date DESC"#,
+        params.league,
+        params.team,
     )
-    .bind(&params.league)
-    .bind(&params.team)
     .fetch_all(&*state.pool).await?;
 
     let mut game_rows: Vec<GameRow> = Vec::new();
     let mut record = Record { wins: 0, losses: 0, ties: 0 };
 
     for row in &rows {
-        let data_text: Option<String> = row.try_get("data_text")?;
-        let game: GameData = serde_json::from_str(&data_text.unwrap_or_default())
+        let game: GameData = serde_json::from_str(row.data_text.as_deref().unwrap_or_default())
             .map_err(anyhow::Error::from)?;
 
         let side = if game.home.league.as_deref() == Some(&params.league)
@@ -73,12 +70,10 @@ pub async fn handle(
         };
 
         let opponent = if side == "home" { &game.away } else { &game.home };
-        let drive_file_id: String = row.try_get("drive_file_id")?;
-        let date: Option<chrono::NaiveDate> = row.try_get("date")?;
 
         game_rows.push(GameRow {
-            drive_file_id,
-            date: date.map(|d| d.to_string()).unwrap_or_default(),
+            drive_file_id: row.drive_file_id.clone(),
+            date: row.date.map(|d| d.to_string()).unwrap_or_default(),
             side: side.to_string(),
             our_score,
             their_score,

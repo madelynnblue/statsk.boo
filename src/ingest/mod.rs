@@ -3,7 +3,6 @@ pub mod parse;
 
 use std::sync::Arc;
 use sqlx::PgPool;
-use sqlx::Row;
 use crate::config::Config;
 use drive::DriveClient;
 use tracing::{error, info, warn};
@@ -20,9 +19,9 @@ pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
 }
 
 async fn game_count(pool: &PgPool) -> anyhow::Result<i64> {
-    let row = sqlx::query("SELECT COUNT(*) FROM games")
+    let row = sqlx::query!("SELECT COUNT(*) as count FROM games")
         .fetch_one(pool).await?;
-    Ok(row.try_get(0)?)
+    Ok(row.count.unwrap_or(0))
 }
 
 async fn run_ingest(cfg: &Config, pool: &PgPool, client: &DriveClient) -> anyhow::Result<()> {
@@ -61,10 +60,9 @@ async fn run_ingest(cfg: &Config, pool: &PgPool, client: &DriveClient) -> anyhow
 }
 
 async fn last_ingest_at(pool: &PgPool) -> anyhow::Result<Option<chrono::DateTime<chrono::Utc>>> {
-    let row = sqlx::query("SELECT MAX(ingested_at) as ts FROM games")
+    let row = sqlx::query!("SELECT MAX(ingested_at) as ts FROM games")
         .fetch_one(pool).await?;
-    let ts: Option<chrono::DateTime<chrono::Utc>> = row.try_get("ts")?;
-    Ok(ts)
+    Ok(row.ts)
 }
 
 async fn process_file(
@@ -73,11 +71,9 @@ async fn process_file(
     file_id: &str,
     file_name: &str,
 ) -> anyhow::Result<bool> {
-    let row = sqlx::query("SELECT COUNT(*) FROM games WHERE drive_file_id = $1")
-        .bind(file_id)
+    let row = sqlx::query!("SELECT COUNT(*) as count FROM games WHERE drive_file_id = $1", file_id)
         .fetch_one(pool).await?;
-    let count: i64 = row.try_get(0)?;
-    if count > 0 {
+    if row.count.unwrap_or(0) > 0 {
         return Ok(false);
     }
 
@@ -89,17 +85,17 @@ async fn process_file(
     let team_search = game.team_search_text();
     let data = serde_json::to_value(&game)?;
 
-    sqlx::query(
+    sqlx::query!(
         r#"INSERT INTO games
            (drive_file_id, date, data, player_search, team_search)
            VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (drive_file_id) DO NOTHING"#,
+        file_id,
+        date,
+        &data,
+        &player_search,
+        &team_search,
     )
-    .bind(file_id)
-    .bind(date)
-    .bind(&data)
-    .bind(&player_search)
-    .bind(&team_search)
     .execute(pool).await?;
 
     Ok(true)

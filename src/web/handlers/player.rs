@@ -1,7 +1,6 @@
 use axum::extract::{Query, State};
 use axum::response::Html;
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use crate::models::GameData;
 use crate::web::{AppState, error::AppError};
 
@@ -36,7 +35,7 @@ pub async fn handle(
     State(state): State<AppState>,
     Query(params): Query<PlayerParams>,
 ) -> Result<Html<String>, AppError> {
-    let rows = sqlx::query(
+    let rows = sqlx::query!(
         r#"SELECT drive_file_id, date, data FROM games
            WHERE data @> jsonb_build_object(
                'home', jsonb_build_object(
@@ -51,21 +50,17 @@ pub async fn handle(
                )
            )
            ORDER BY date DESC"#,
+        params.league,
+        params.name,
+        params.number,
     )
-    .bind(&params.league)
-    .bind(&params.name)
-    .bind(&params.number)
     .fetch_all(&*state.pool).await?;
 
     let mut game_rows: Vec<GameRow> = Vec::new();
     let mut career = CareerStats { games: 0, jams_as_jammer: 0, points_as_jammer: 0, total_penalties: 0 };
 
     for row in &rows {
-        let drive_file_id: String = row.try_get("drive_file_id")?;
-        let date: Option<chrono::NaiveDate> = row.try_get("date")?;
-        let data: serde_json::Value = row.try_get("data")?;
-
-        let game: GameData = serde_json::from_value(data)
+        let game: GameData = serde_json::from_value(row.data.clone())
             .map_err(anyhow::Error::from)?;
 
         let side = if game.home.league.as_deref() == Some(&params.league)
@@ -103,8 +98,8 @@ pub async fn handle(
         career.total_penalties += penalties;
 
         game_rows.push(GameRow {
-            drive_file_id,
-            date: date.map(|d| d.to_string()).unwrap_or_default(),
+            drive_file_id: row.drive_file_id.clone(),
+            date: row.date.map(|d| d.to_string()).unwrap_or_default(),
             opponent_team,
             opponent_league,
             side: side.to_string(),
