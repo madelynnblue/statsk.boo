@@ -86,7 +86,7 @@ impl FileSource {
 
 pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
     info!("ingest loop starting");
-    let source = if let Some(ref dir) = cfg.ingest_dir {
+    let source = Arc::new(if let Some(ref dir) = cfg.ingest_dir {
         let root = PathBuf::from(dir);
         if !root.is_dir() {
             panic!("INGEST_DIR is not a directory: {dir}");
@@ -98,26 +98,30 @@ pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
                 .clone()
                 .expect("GOOGLE_API_KEY required when INGEST_DIR not set"),
         ))
-    };
+    });
 
-    match reingest_stale(&pool, &source).await {
+    match reingest_stale(pool.clone(), source.clone()).await {
         Ok(n) if n > 0 => info!("re-ingested {n} stale game(s)"),
         Err(e) => error!("re-ingest of stale games failed: {e:#}"),
         _ => {}
     }
 
     loop {
-        if let Err(e) = run_ingest(&cfg, &pool, &source).await {
+        if let Err(e) = run_ingest(&cfg, pool.clone(), source.clone()).await {
             error!("ingest run failed: {e:#}");
         }
         tokio::time::sleep(cfg.ingest_interval).await;
     }
 }
 
-async fn run_ingest(cfg: &Config, pool: &PgPool, source: &FileSource) -> anyhow::Result<()> {
-    let last_ingest = last_ingest_at(pool)
+async fn run_ingest(
+    cfg: &Config,
+    pool: Arc<PgPool>,
+    source: Arc<FileSource>,
+) -> anyhow::Result<()> {
+    let last_ingest = last_ingest_at(&pool)
         .await?
-        .unwrap_or_else(|| chrono::Utc::now() - chrono::Duration::weeks(1));
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
 
     let jitter = chrono::Duration::from_std(cfg.ingest_jitter).unwrap_or_default();
     let since = (last_ingest - jitter).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
@@ -126,16 +130,34 @@ async fn run_ingest(cfg: &Config, pool: &PgPool, source: &FileSource) -> anyhow:
         .list_xlsx_since(&cfg.google_drive_folder_id, &since)
         .await?;
 
-    info!("found {} candidate file(s)", files.len());
+    let n = files.len();
+    info!("found {n} candidate file(s)");
+
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let sem = Arc::new(tokio::sync::Semaphore::new(cores));
+    let mut set = tokio::task::JoinSet::new();
 
     for file in files {
-        info!("ingesting {}", file.name);
-        match process_file(pool, source, &file).await {
-            Ok(true) => info!("ingested {}", file.name),
-            Ok(false) => info!("skipped {} (already present)", file.name),
-            Err(e) => warn!("skipping {}: {e:#}", file.name),
-        }
+        let permit = sem.clone().acquire_owned().await?;
+        let pool = pool.clone();
+        let source = source.clone();
+        set.spawn(async move {
+            let _permit = permit;
+            let name = file.name.clone();
+            match process_file(&pool, &source, &file).await {
+                Ok(true) => info!("ingested {name}"),
+                Ok(false) => info!("skipped {name} (already present)"),
+                Err(e) => warn!("skipping {name}: {e:#}"),
+            }
+        });
     }
+
+    while let Some(result) = set.join_next().await {
+        result?;
+    }
+
     Ok(())
 }
 
@@ -359,12 +381,12 @@ async fn insert_parsed_file(
     Ok(())
 }
 
-async fn reingest_stale(pool: &PgPool, source: &FileSource) -> anyhow::Result<usize> {
+async fn reingest_stale(pool: Arc<PgPool>, source: Arc<FileSource>) -> anyhow::Result<usize> {
     let rows = sqlx::query!(
         "SELECT drive_file_id, modified_time FROM games WHERE parser_version < $1",
         parse::PARSER_VERSION
     )
-    .fetch_all(pool)
+    .fetch_all(&*pool)
     .await?;
 
     if rows.is_empty() {
@@ -376,26 +398,41 @@ async fn reingest_stale(pool: &PgPool, source: &FileSource) -> anyhow::Result<us
         rows.len()
     );
 
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let sem = Arc::new(tokio::sync::Semaphore::new(cores));
+    let mut set = tokio::task::JoinSet::new();
+    let total = rows.len();
+
+    for (i, row) in rows.into_iter().enumerate() {
+        let permit = sem.clone().acquire_owned().await?;
+        let pool = pool.clone();
+        let source = source.clone();
+        set.spawn(async move {
+            let _permit = permit;
+            info!("re-ingesting {}/{}: {}", i + 1, total, row.drive_file_id);
+            match insert_parsed_file(
+                &pool,
+                &source,
+                &row.drive_file_id,
+                &row.drive_file_id,
+                row.modified_time,
+            )
+            .await
+            {
+                Ok(()) => 1,
+                Err(e) => {
+                    warn!("re-ingest failed for {}: {e:#}", row.drive_file_id);
+                    0
+                }
+            }
+        });
+    }
+
     let mut count = 0;
-    for (i, row) in rows.iter().enumerate() {
-        info!(
-            "re-ingesting {}/{}: {}",
-            i + 1,
-            rows.len(),
-            row.drive_file_id
-        );
-        match insert_parsed_file(
-            pool,
-            source,
-            &row.drive_file_id,
-            &row.drive_file_id,
-            row.modified_time,
-        )
-        .await
-        {
-            Ok(()) => count += 1,
-            Err(e) => warn!("re-ingest failed for {}: {e:#}", row.drive_file_id),
-        }
+    while let Some(result) = set.join_next().await {
+        count += result?;
     }
     Ok(count)
 }
