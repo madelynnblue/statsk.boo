@@ -6,7 +6,8 @@ use axum::response::Html;
 pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppError> {
     let rows = sqlx::query!(
         r#"SELECT drive_file_id, date, data::text as data_text,
-           data->'home'->>'team' as home_team, data->'away'->>'team' as away_team
+           data->'home'->>'team' as home_team, data->'home'->>'league' as home_league,
+           data->'away'->>'team' as away_team, data->'away'->>'league' as away_league
            FROM games ORDER BY date DESC NULLS LAST, ingested_at DESC LIMIT 10"#,
     )
     .fetch_all(&*state.pool)
@@ -22,7 +23,9 @@ pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppEr
             home_score: game.total_score("home"),
             away_score: game.total_score("away"),
             home_team: r.home_team.clone().unwrap_or_default(),
+            home_league: r.home_league.clone().unwrap_or_default(),
             away_team: r.away_team.clone().unwrap_or_default(),
+            away_league: r.away_league.clone().unwrap_or_default(),
         });
     }
 
@@ -38,5 +41,7 @@ struct RecentGame {
     home_score: i16,
     away_score: i16,
     home_team: String,
+    home_league: String,
     away_team: String,
+    away_league: String,
 }

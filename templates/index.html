@@ -12,8 +12,8 @@
     {% for g in games %}
     <tr>
       <td>{% if g.date %}{{ g.date }}{% endif %}</td>
-      <td>{{ g.home_team }}</td>
-      <td>{{ g.away_team }}</td>
+      <td><a href="/team?league={{ g.home_league | urlencode }}&team={{ g.home_team | urlencode }}">{{ g.home_team }}</a></td>
+      <td><a href="/team?league={{ g.away_league | urlencode }}&team={{ g.away_team | urlencode }}">{{ g.away_team }}</a></td>
       <td>
         <a href="/game/{{ g.drive_file_id }}">
           {% if g.home_score is not none %}{{ g.home_score }}{% else %}—{% endif %}
