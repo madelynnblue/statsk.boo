@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use reqwest::header;
 use reqwest::Client;
 use serde::Deserialize;
 
@@ -22,12 +23,24 @@ pub struct DriveClient {
     api_key: String,
 }
 
+static APP_USER_AGENT: &str = concat!(
+    env!("CARGO_PKG_NAME"),
+    "/",
+    env!("CARGO_PKG_VERSION"),
+);
+
 impl DriveClient {
     pub fn new(api_key: String) -> Self {
-        Self {
-            client: Client::new(),
-            api_key,
-        }
+        let mut headers = header::HeaderMap::new();
+        headers.insert(
+            header::USER_AGENT,
+            header::HeaderValue::from_static(APP_USER_AGENT),
+        );
+        let client = Client::builder()
+            .default_headers(headers)
+            .build()
+            .expect("reqwest client builder should not fail");
+        Self { client, api_key }
     }
 
     pub async fn list_all_xlsx(&self, folder_id: &str) -> Result<Vec<DriveFile>> {
