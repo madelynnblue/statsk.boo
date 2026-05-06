@@ -111,6 +111,14 @@ where
     let (game, date) = parse::parse_statsbook_with_date(&bytes)
         .map_err(|e| anyhow::anyhow!("parse error in {file_name}: {e:#}"))?;
 
+    if let Some(ref d) = date {
+        let tomorrow = chrono::Utc::now().date_naive() + chrono::Duration::days(1);
+        if *d > tomorrow {
+            tracing::info!("skipping {file_name}: date {d} is more than 1 day in the future");
+            return Ok(());
+        }
+    }
+
     let player_search = game.player_search_text();
     let team_search = game.team_search_text();
     let data = serde_json::to_value(&game)?;
