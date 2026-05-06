@@ -5,7 +5,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 3;
+pub const PARSER_VERSION: i64 = 5;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes)?;
@@ -23,8 +23,9 @@ pub fn parse_statsbook_with_date(bytes: &[u8]) -> Result<(GameData, Option<chron
     let away = parse_team(&mut wb, 8, 9, 13, 20)?;
     let mut periods = parse_scores(&mut wb)?;
     merge_lineups(&mut wb, &mut periods)?;
-    let penalties = parse_penalties(&mut wb)?;
-    let game_summary = parse_game_summary(&mut wb).ok();
+    let igrf = read_igrf_cells(&mut wb)?;
+    let penalties = parse_penalties(&mut wb, &igrf)?;
+    let game_summary = parse_game_summary(&mut wb, &igrf).ok();
 
     let game = GameData {
         version,
@@ -68,6 +69,79 @@ fn float_to_int_str(v: f64) -> String {
     } else {
         v.to_string()
     }
+}
+
+/// Maps Excel cell references like "B14" to their string values from the IGRF sheet.
+type IgrfCells = std::collections::HashMap<String, String>;
+
+fn read_igrf_cells<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Result<IgrfCells> {
+    let sheet = wb.worksheet_range("IGRF").context("no IGRF sheet")?;
+    let (nrows, ncols) = sheet.get_size();
+    let mut map = IgrfCells::default();
+    for row in 0..nrows {
+        for col in 0..ncols {
+            if let Some(val) = cell_str(&sheet, row as u32, col as u32) {
+                let ref_key = col_row_to_excel(col as u32, row as u32);
+                map.insert(ref_key, val);
+            }
+        }
+    }
+    Ok(map)
+}
+
+/// Convert 0-indexed (col, row) to Excel cell reference like "B14".
+fn col_row_to_excel(col: u32, row: u32) -> String {
+    let mut c = col;
+    let mut col_str = String::new();
+    loop {
+        col_str.insert(0, ((c % 26) as u8 + b'A') as char);
+        c /= 26;
+        if c == 0 {
+            break;
+        }
+        c -= 1;
+    }
+    format!("{}{}", col_str, row + 1)
+}
+
+/// Try to resolve a cell value from the IGRF map using a formula pattern.
+/// Handles `IF(ISBLANK(IGRF!$B14),"",IGRF!$B14)` and `IF(IGRF!B14="","",IGRF!B14)`.
+fn resolve_igrf_formula(formula: &str, igrf: &IgrfCells) -> Option<String> {
+    // Extract the first IGRF cell reference from the formula.
+    // Pattern: IGRF!$B14 or IGRF!B14
+    let after_igrf = formula.find("IGRF!")?;
+    let ref_start = after_igrf + 5; // skip "IGRF!"
+    let ref_str = &formula[ref_start..];
+    // Strip leading $ signs, read column letter(s) then row number
+    let stripped: String = ref_str
+        .chars()
+        .filter(|&c| c != '$')
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect();
+    if stripped.is_empty() {
+        return None;
+    }
+    igrf.get(&stripped).cloned()
+}
+
+/// Read a formula from a sheet's formula range, falling back to the IGRF map.
+fn cell_str_with_formula(
+    data: &Range<Data>,
+    formulas: &Option<Range<String>>,
+    row: u32,
+    col: u32,
+    igrf: &IgrfCells,
+) -> Option<String> {
+    if let Some(val) = cell_str(data, row, col) {
+        return Some(val);
+    }
+    // Try formula resolution.
+    if let Some(fm_range) = formulas
+        && let Some(fm) = fm_range.get_value((row, col))
+        && !fm.is_empty() {
+            return resolve_igrf_formula(fm, igrf);
+        }
+    None
 }
 
 fn cell_bool(r: &Range<Data>, row: u32, col: u32) -> bool {
@@ -250,8 +324,12 @@ fn merge_lineups<R: std::io::Read + std::io::Seek>(
         };
         let mut row = start_row;
         for jam in period.jams.iter_mut() {
-            // Skip SP (star pass) rows in the Lineups sheet.
-            while let Some(Data::String(_)) = sheet.get_value((row, 0u32)) {
+            // Skip SP (star pass) rows in the Lineups sheet. An empty
+            // string in column A means the cell exists but is blank, not SP.
+            while let Some(Data::String(s)) = sheet.get_value((row, 0u32)) {
+                if s.trim().is_empty() {
+                    break;
+                }
                 row += 1;
             }
             jam.home.lineup = parse_lineup_side(&sheet, row, home_np_col);
@@ -290,11 +368,27 @@ fn parse_lineup_side(sheet: &Range<Data>, row: u32, no_pivot_col: u32) -> Vec<Li
         .collect()
 }
 
-fn parse_penalties<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Result<Vec<Penalty>> {
-    let sheet = match wb.worksheet_range("Penalties") {
+fn parse_penalties<R: std::io::Read + std::io::Seek>(
+    wb: &mut Xlsx<R>,
+    igrf: &IgrfCells,
+) -> Result<Vec<Penalty>> {
+    match parse_penalties_sheet(wb, "Penalties", igrf) {
+        Ok(p) if !p.is_empty() => Ok(p),
+        _ => parse_penalties_sheet(wb, "Penalties-Lineups", igrf),
+    }
+}
+
+fn parse_penalties_sheet<R: std::io::Read + std::io::Seek>(
+    wb: &mut Xlsx<R>,
+    sheet_name: &str,
+    igrf: &IgrfCells,
+) -> Result<Vec<Penalty>> {
+    let sheet = match wb.worksheet_range(sheet_name) {
         Ok(s) => s,
         Err(_) => return Ok(vec![]),
     };
+    let formulas = wb.worksheet_formula(sheet_name).ok();
+
     let mut penalties = Vec::new();
     let sections: &[(u8, &str, u32, u32, u32)] = &[
         (1, "home", 0, 1, 10),
@@ -306,10 +400,11 @@ fn parse_penalties<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Result
         for i in 0..20u32 {
             let code_row = 3 + i * 2;
             let jam_row = code_row + 1;
-            let skater_num = match cell_str(&sheet, code_row, skater_col) {
-                Some(n) => n,
-                None => break,
-            };
+            let skater_num =
+                match cell_str_with_formula(&sheet, &formulas, code_row, skater_col, igrf) {
+                    Some(n) => n,
+                    None => break,
+                };
             if is_zero_jam_player(&skater_num) {
                 continue;
             }
@@ -348,15 +443,19 @@ fn parse_penalties<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Result
     Ok(penalties)
 }
 
-fn parse_game_summary<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Result<GameSummary> {
+fn parse_game_summary<R: std::io::Read + std::io::Seek>(
+    wb: &mut Xlsx<R>,
+    igrf: &IgrfCells,
+) -> Result<GameSummary> {
     let sheet = wb
         .worksheet_range("Game Summary")
         .context("no Game Summary sheet")?;
+    let formulas = wb.worksheet_formula("Game Summary").ok();
     let home_players = (5u32..=19)
-        .filter_map(|row| parse_summary_player(&sheet, row))
+        .filter_map(|row| parse_summary_player(&sheet, &formulas, row, igrf))
         .collect();
     let away_players = (27u32..=41)
-        .filter_map(|row| parse_summary_player(&sheet, row))
+        .filter_map(|row| parse_summary_player(&sheet, &formulas, row, igrf))
         .collect();
     Ok(GameSummary {
         home_totals: parse_summary_totals(&sheet, 25),
@@ -366,12 +465,17 @@ fn parse_game_summary<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Res
     })
 }
 
-fn parse_summary_player(sheet: &Range<Data>, row: u32) -> Option<SummaryPlayer> {
-    let number = cell_str(sheet, row, 0)?;
+fn parse_summary_player(
+    sheet: &Range<Data>,
+    formulas: &Option<Range<String>>,
+    row: u32,
+    igrf: &IgrfCells,
+) -> Option<SummaryPlayer> {
+    let number = cell_str_with_formula(sheet, formulas, row, 0, igrf)?;
     if is_zero_jam_player(&number) {
         return None;
     }
-    let name = cell_str(sheet, row, 1).unwrap_or_default();
+    let name = cell_str_with_formula(sheet, formulas, row, 1, igrf).unwrap_or_default();
     Some(SummaryPlayer {
         number,
         name,

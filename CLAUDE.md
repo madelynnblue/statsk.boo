@@ -37,13 +37,24 @@ WSB (WFTDA Statsbook Browser) downloads WFTDA statsbook `.xlsx` files from a pub
 - Team = `(league, team)` pair
 - Game = Google Drive `file_id` (the table's primary key)
 
-**Database:** Single `games` table with `drive_file_id TEXT PRIMARY KEY`, `date DATE`, `ingested_at TIMESTAMPTZ`, `data JSONB NOT NULL`, `player_search TEXT`, `team_search TEXT`. GIN indexes on `data` (JSONB containment queries `@>`), and trigram GIN indexes on `player_search` and `team_search` (for `ILIKE` fuzzy search).
+**Database:** Relational schema with five tables:
+- `games` (`drive_file_id TEXT PK`, `date`, `ingested_at`, `parser_version`, `version`, `tournament`, `host_league`, `venue_*`, `periods JSONB`, `penalties JSONB`)
+- `game_sides` (`drive_file_id FK`, `side`, `league`, `team`, `color`)
+- `game_skaters` (`drive_file_id FK`, `side`, `number`, `name`)
+- `game_summary` (`drive_file_id FK`, `side`, `stats JSONB`)
+- `game_*_search` materialized views for full-text search
 
 **SQL queries:** All use runtime `sqlx::query().bind()` — the project avoids compile-time macros (`query!`, `query_as!`) because they require a live database at build time. Type extraction uses `row.try_get::<Type, _>(col)?`.
 
 **Migrations:** `sqlx::migrate!("./migrations").set_locking(false)` — locking is disabled because CockroachDB doesn't support PostgreSQL advisory locks.
 
-**Parsing:** `ingest/parse.rs` uses calamine 0.26 to read `.xlsx` files. The calamine API uses `Data` enum (not `DataType` — that's a trait in 0.26). Cell values are read by address (e.g., `(0, 0)` for A1).
+**Parsing:** `ingest/parse.rs` uses calamine to read `.xlsx` files. Cell values are read by address (e.g., `(0, 0)` for A1). The calamine API uses `Data` enum (not `DataType` — that's a trait). Calamine reads **cached** cell values only — it does NOT evaluate Excel formulas. `worksheet_formula()` returns `Range<String>` with raw formula text.
+
+**Formula resolution for IGRF cross-sheet references:** Some statsbooks use `=IF(IGRF!B14="","",IGRF!B14)` formulas in the Penalties and Game Summary sheets to auto-populate skater numbers/names from the IGRF roster. When these formulas have no cached value (file saved without calculating), calamine returns empty cells. The parser handles this by:
+1. Building an IGRF cell map (`read_igrf_cells`) — maps Excel refs like "B14" to their string values
+2. `cell_str_with_formula` — tries cached value first, falls back to parsing the formula string and extracting IGRF cell references
+3. `resolve_igrf_formula` — extracts the first `IGRF!` cell reference from a formula string and looks it up in the IGRF map
+4. All sheets that may reference IGRF (Penalties, Penalties-Lineups, Game Summary) use `cell_str_with_formula` for number/name columns
 
 **Web layer:**
 - `AppState` holds `Arc<PgPool>` and `Arc<Environment<'static>>` (Minijinja templates)

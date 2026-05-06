@@ -49,8 +49,14 @@ pub async fn handle(
     .fetch_all(&*state.pool)
     .await?;
 
-    let home_side = side_rows.iter().find(|s| s.side == "home").expect("game must have home side");
-    let away_side = side_rows.iter().find(|s| s.side == "away").expect("game must have away side");
+    let home_side = side_rows
+        .iter()
+        .find(|s| s.side == "home")
+        .expect("game must have home side");
+    let away_side = side_rows
+        .iter()
+        .find(|s| s.side == "away")
+        .expect("game must have away side");
 
     let home_skaters: Vec<Skater> = skater_rows
         .iter()

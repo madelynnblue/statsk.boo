@@ -6,4 +6,4 @@ set +a
 
 # export RUST_LOG=debug
 
-cargo watch -x run
+cargo watch -x "run --bin wsb"
