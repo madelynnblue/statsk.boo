@@ -65,18 +65,6 @@ impl DriveClient {
         Self { client, api_key }
     }
 
-    pub async fn list_all_xlsx(&self, folder_id: &str) -> Result<Vec<DriveFile>> {
-        let subfolders = self.list_items(folder_id, true, None).await?;
-        let mut all = Vec::new();
-        for folder in subfolders {
-            let files = self.list_items(&folder.id, false, None).await?;
-            all.extend(files.into_iter().filter(|f| f.name.ends_with(".xlsx")));
-        }
-        let root_files = self.list_items(folder_id, false, None).await?;
-        all.extend(root_files.into_iter().filter(|f| f.name.ends_with(".xlsx")));
-        Ok(all)
-    }
-
     pub async fn list_xlsx_since(&self, folder_id: &str, since: &str) -> Result<Vec<DriveFile>> {
         let mut all = Vec::new();
         let subfolders = self.list_items(folder_id, true, None).await?;

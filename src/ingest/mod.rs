@@ -22,11 +22,9 @@ impl LocalSource {
         Self { root }
     }
 
-    fn list_xlsx_since(&self, since: &str) -> anyhow::Result<Vec<DriveFile>> {
-        let since_dt = chrono::DateTime::parse_from_rfc3339(since)
-            .with_context(|| format!("parsing since timestamp: {since}"))?;
+    fn list_all_xlsx(&self) -> anyhow::Result<Vec<DriveFile>> {
         let mut files = Vec::new();
-        visit_dir(&self.root, &self.root, &since_dt, &mut files)?;
+        visit_dir(&self.root, &self.root, &mut files)?;
         Ok(files)
     }
 
@@ -39,21 +37,15 @@ impl LocalSource {
 fn visit_dir(
     root: &std::path::Path,
     dir: &std::path::Path,
-    since: &chrono::DateTime<chrono::FixedOffset>,
     files: &mut Vec<DriveFile>,
 ) -> anyhow::Result<()> {
     for entry in std::fs::read_dir(dir).with_context(|| format!("reading dir {}", dir.display()))? {
         let entry = entry.with_context(|| format!("entry in {}", dir.display()))?;
         let path = entry.path();
         if path.is_dir() {
-            visit_dir(root, &path, since, files)?;
-        } else if path.extension().map_or(false, |e| e == "xlsx") {
-            let df = DriveFile::from_local(&path, root)?;
-            let mtime = chrono::DateTime::parse_from_rfc3339(&df.modified_time)
-                .unwrap_or_else(|_| chrono::DateTime::UNIX_EPOCH.fixed_offset());
-            if mtime > *since {
-                files.push(df);
-            }
+            visit_dir(root, &path, files)?;
+        } else if path.extension().is_some_and(|e| e == "xlsx") {
+            files.push(DriveFile::from_local(&path, root)?);
         }
     }
     Ok(())
@@ -79,7 +71,7 @@ impl FileSource {
     ) -> anyhow::Result<Vec<DriveFile>> {
         match self {
             FileSource::Drive(c) => c.list_xlsx_since(folder_id, since).await,
-            FileSource::Local(s) => s.list_xlsx_since(since),
+            FileSource::Local(s) => s.list_all_xlsx(),
         }
     }
 
