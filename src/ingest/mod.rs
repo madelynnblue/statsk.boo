@@ -99,14 +99,19 @@ pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
         ))
     });
 
-    match reingest_stale(pool.clone(), source.clone()).await {
+    // One transaction at a time: the fingerprint GIN scan reads the whole table snapshot,
+    // which concurrent writes invalidate, causing RETRY_SERIALIZABLE on commit.
+    // Downloads and parsing happen in parallel; only the DB transaction is serialized.
+    let tx_sem = Arc::new(tokio::sync::Semaphore::new(1));
+
+    match reingest_stale(pool.clone(), source.clone(), tx_sem.clone()).await {
         Ok(n) if n > 0 => info!("re-ingested {n} stale game(s)"),
         Err(e) => error!("re-ingest of stale games failed: {e:#}"),
         _ => {}
     }
 
     loop {
-        if let Err(e) = run_ingest(&cfg, pool.clone(), source.clone()).await {
+        if let Err(e) = run_ingest(&cfg, pool.clone(), source.clone(), tx_sem.clone()).await {
             error!("ingest run failed: {e:#}");
         }
         tokio::time::sleep(cfg.ingest_interval).await;
@@ -117,6 +122,7 @@ async fn run_ingest(
     cfg: &Config,
     pool: Arc<PgPool>,
     source: Arc<FileSource>,
+    tx_sem: Arc<tokio::sync::Semaphore>,
 ) -> anyhow::Result<()> {
     let last_ingest = last_ingest_at(&pool)
         .await?
@@ -142,10 +148,11 @@ async fn run_ingest(
         let permit = sem.clone().acquire_owned().await?;
         let pool = pool.clone();
         let source = source.clone();
+        let tx_sem = tx_sem.clone();
         set.spawn(async move {
             let _permit = permit;
             let name = file.name.clone();
-            match process_file(&pool, &source, &file).await {
+            match process_file(&pool, &source, &file, &tx_sem).await {
                 Ok(true) => info!("ingested {name}"),
                 Ok(false) => info!("skipped {name} (already present)"),
                 Err(e) => warn!("skipping {name}: {e:#}"),
@@ -171,6 +178,7 @@ async fn process_file(
     pool: &PgPool,
     source: &FileSource,
     file: &DriveFile,
+    tx_sem: &tokio::sync::Semaphore,
 ) -> anyhow::Result<bool> {
     let modified_time: DateTime<Utc> = file.modified_time.parse()?;
 
@@ -186,7 +194,7 @@ async fn process_file(
         return Ok(false);
     }
 
-    insert_parsed_file(pool, source, &file.id, &file.name, modified_time).await?;
+    insert_parsed_file(pool, source, &file.id, &file.name, modified_time, tx_sem).await?;
     Ok(true)
 }
 
@@ -235,6 +243,7 @@ async fn insert_parsed_file(
     file_id: &str, // used as both the download key and games.id PK
     file_name: &str,
     modified_time: DateTime<Utc>,
+    tx_sem: &tokio::sync::Semaphore,
 ) -> anyhow::Result<()> {
     let bytes = source.read_file(file_id).await?;
     let (game, date) = parse::parse_statsbook_with_date(&bytes)
@@ -276,6 +285,7 @@ async fn insert_parsed_file(
         })
         .transpose()?;
 
+    let _tx_permit = tx_sem.acquire().await?;
     let mut attempt = 0;
     loop {
         let mut tx = pool.begin().await?;
@@ -405,7 +415,11 @@ fn is_retryable(e: &sqlx::Error) -> bool {
     false
 }
 
-async fn reingest_stale(pool: Arc<PgPool>, source: Arc<FileSource>) -> anyhow::Result<usize> {
+async fn reingest_stale(
+    pool: Arc<PgPool>,
+    source: Arc<FileSource>,
+    tx_sem: Arc<tokio::sync::Semaphore>,
+) -> anyhow::Result<usize> {
     let rows = sqlx::query!(
         "SELECT id, source, modified_time FROM games WHERE parser_version < $1",
         parse::PARSER_VERSION
@@ -448,10 +462,13 @@ async fn reingest_stale(pool: Arc<PgPool>, source: Arc<FileSource>) -> anyhow::R
         let permit = sem.clone().acquire_owned().await?;
         let pool = pool.clone();
         let source = source.clone();
+        let tx_sem = tx_sem.clone();
         set.spawn(async move {
             let _permit = permit;
             info!("re-ingesting {}/{}: {}", i + 1, total, row.id);
-            match insert_parsed_file(&pool, &source, &row.id, &row.id, row.modified_time).await {
+            match insert_parsed_file(&pool, &source, &row.id, &row.id, row.modified_time, &tx_sem)
+                .await
+            {
                 Ok(()) => 1,
                 Err(e) => {
                     warn!("re-ingest failed for {}: {e:#}", row.id);
