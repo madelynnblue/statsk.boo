@@ -65,6 +65,13 @@ enum FileSource {
 }
 
 impl FileSource {
+    fn source_str(&self) -> &'static str {
+        match self {
+            FileSource::Drive(_) => "drive",
+            FileSource::Local(_) => "file",
+        }
+    }
+
     async fn list_xlsx_since(
         &self,
         folder_id: &str,
@@ -178,12 +185,9 @@ async fn process_file(
     // Skip if we already have this file at this (or a newer) modified time. This
     // saves re-downloading on every poll for files in the `since` window that
     // haven't actually changed.
-    let existing = sqlx::query!(
-        "SELECT modified_time FROM games WHERE drive_file_id = $1",
-        file.id,
-    )
-    .fetch_optional(pool)
-    .await?;
+    let existing = sqlx::query!("SELECT modified_time FROM games WHERE id = $1", file.id,)
+        .fetch_optional(pool)
+        .await?;
     if let Some(existing) = existing
         && existing.modified_time >= modified_time
     {
@@ -236,7 +240,7 @@ fn build_fingerprint(game: &GameData, date: Option<NaiveDate>) -> anyhow::Result
 async fn insert_parsed_file(
     pool: &PgPool,
     source: &FileSource,
-    file_id: &str,
+    file_id: &str, // used as both the download key and games.id PK
     file_name: &str,
     modified_time: DateTime<Utc>,
 ) -> anyhow::Result<()> {
@@ -285,14 +289,14 @@ async fn insert_parsed_file(
         let mut tx = pool.begin().await?;
 
         // Remove the row we are about to replace (noop for new files; clears old data for re-ingest).
-        sqlx::query!("DELETE FROM games WHERE drive_file_id = $1", file_id)
+        sqlx::query!("DELETE FROM games WHERE id = $1", file_id)
             .execute(&mut *tx)
             .await?;
 
         // Check for a duplicate by fingerprint. The self-delete above ensures we never match
         // the row we just removed, so this can only find a genuinely different file.
         let existing = sqlx::query!(
-            r#"SELECT drive_file_id, modified_time FROM games WHERE fingerprint = $1 ORDER BY modified_time DESC LIMIT 1"#,
+            r#"SELECT id, modified_time FROM games WHERE fingerprint = $1 ORDER BY modified_time DESC LIMIT 1"#,
             &fingerprint_json,
         )
         .fetch_optional(&mut *tx)
@@ -302,30 +306,28 @@ async fn insert_parsed_file(
             if existing.modified_time >= modified_time {
                 info!(
                     "duplicate game detected: skipping {} (existing {} has same or newer modified time)",
-                    file_id, existing.drive_file_id
+                    file_id, existing.id
                 );
                 tx.rollback().await?;
                 return Ok(());
             }
             info!(
                 "duplicate game detected: replacing {} with {} (newer modified time)",
-                existing.drive_file_id, file_id
+                existing.id, file_id
             );
-            sqlx::query!(
-                "DELETE FROM games WHERE drive_file_id = $1",
-                existing.drive_file_id
-            )
-            .execute(&mut *tx)
-            .await?;
+            sqlx::query!("DELETE FROM games WHERE id = $1", existing.id)
+                .execute(&mut *tx)
+                .await?;
         }
 
         sqlx::query!(
             r#"INSERT INTO games
-               (drive_file_id, date, parser_version, version, tournament, host_league,
+               (id, source, date, parser_version, version, tournament, host_league,
                 venue_name, venue_city, venue_state, periods, penalties,
                 modified_time, fingerprint)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)"#,
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"#,
             file_id,
+            source.source_str(),
             date,
             parse::PARSER_VERSION,
             game.version,
@@ -344,7 +346,7 @@ async fn insert_parsed_file(
 
         for (side_key, side) in [("home", &game.home), ("away", &game.away)] {
             sqlx::query!(
-                "INSERT INTO game_sides (drive_file_id, side, league, team, color) VALUES ($1, $2, $3, $4, $5)",
+                "INSERT INTO game_sides (game_id, side, league, team, color) VALUES ($1, $2, $3, $4, $5)",
                 file_id,
                 side_key,
                 side.league,
@@ -356,7 +358,7 @@ async fn insert_parsed_file(
 
             for skater in &side.skaters {
                 sqlx::query!(
-                    "INSERT INTO game_skaters (drive_file_id, side, number, name) VALUES ($1, $2, $3, $4)",
+                    "INSERT INTO game_skaters (game_id, side, number, name) VALUES ($1, $2, $3, $4)",
                     file_id,
                     side_key,
                     skater.number,
@@ -369,14 +371,14 @@ async fn insert_parsed_file(
 
         if let Some((ref home_stats, ref away_stats)) = home_stats {
             sqlx::query!(
-                "INSERT INTO game_summary (drive_file_id, side, stats) VALUES ($1, 'home', $2)",
+                "INSERT INTO game_summary (game_id, side, stats) VALUES ($1, 'home', $2)",
                 file_id,
                 home_stats,
             )
             .execute(&mut *tx)
             .await?;
             sqlx::query!(
-                "INSERT INTO game_summary (drive_file_id, side, stats) VALUES ($1, 'away', $2)",
+                "INSERT INTO game_summary (game_id, side, stats) VALUES ($1, 'away', $2)",
                 file_id,
                 away_stats,
             )
@@ -413,11 +415,26 @@ fn is_retryable(e: &sqlx::Error) -> bool {
 
 async fn reingest_stale(pool: Arc<PgPool>, source: Arc<FileSource>) -> anyhow::Result<usize> {
     let rows = sqlx::query!(
-        "SELECT drive_file_id, modified_time FROM games WHERE parser_version < $1",
+        "SELECT id, source, modified_time FROM games WHERE parser_version < $1",
         parse::PARSER_VERSION
     )
     .fetch_all(&*pool)
     .await?;
+
+    if rows.is_empty() {
+        return Ok(0);
+    }
+
+    let source_str = source.source_str();
+    let (rows, skipped): (Vec<_>, Vec<_>) =
+        rows.into_iter().partition(|row| row.source == source_str);
+    if !skipped.is_empty() {
+        warn!(
+            "skipping {} stale game(s) due to source mismatch (runtime={})",
+            skipped.len(),
+            source_str
+        );
+    }
 
     if rows.is_empty() {
         return Ok(0);
@@ -441,19 +458,11 @@ async fn reingest_stale(pool: Arc<PgPool>, source: Arc<FileSource>) -> anyhow::R
         let source = source.clone();
         set.spawn(async move {
             let _permit = permit;
-            info!("re-ingesting {}/{}: {}", i + 1, total, row.drive_file_id);
-            match insert_parsed_file(
-                &pool,
-                &source,
-                &row.drive_file_id,
-                &row.drive_file_id,
-                row.modified_time,
-            )
-            .await
-            {
+            info!("re-ingesting {}/{}: {}", i + 1, total, row.id);
+            match insert_parsed_file(&pool, &source, &row.id, &row.id, row.modified_time).await {
                 Ok(()) => 1,
                 Err(e) => {
-                    warn!("re-ingest failed for {}: {e:#}", row.drive_file_id);
+                    warn!("re-ingest failed for {}: {e:#}", row.id);
                     0
                 }
             }
@@ -471,6 +480,18 @@ async fn reingest_stale(pool: Arc<PgPool>, source: Arc<FileSource>) -> anyhow::R
 mod tests {
     use super::*;
     use crate::models::{GameData, TeamData, Venue};
+
+    #[test]
+    fn file_source_str_drive() {
+        let s = FileSource::Drive(drive::DriveClient::new("fake".into()));
+        assert_eq!(s.source_str(), "drive");
+    }
+
+    #[test]
+    fn file_source_str_local() {
+        let s = FileSource::Local(LocalSource::new(std::path::PathBuf::from("/tmp")));
+        assert_eq!(s.source_str(), "file");
+    }
 
     fn make_game(
         home_league: &str,

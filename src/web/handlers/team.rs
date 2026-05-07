@@ -12,7 +12,7 @@ pub struct TeamParams {
 
 #[derive(Serialize)]
 struct GameRow {
-    drive_file_id: String,
+    game_id: String,
     date: String,
     side: String,
     our_score: i16,
@@ -34,12 +34,12 @@ pub async fn handle(
     Query(params): Query<TeamParams>,
 ) -> Result<Html<String>, AppError> {
     let rows = sqlx::query!(
-        r#"SELECT g.drive_file_id, g.date, g.periods,
+        r#"SELECT g.id, g.date, g.periods,
                   team_side.side as "side!: String",
                   opp.league as opp_league, opp.team as opp_team
            FROM games g
-           JOIN game_sides team_side ON team_side.drive_file_id = g.drive_file_id
-           JOIN game_sides opp ON opp.drive_file_id = g.drive_file_id AND opp.side != team_side.side
+           JOIN game_sides team_side ON team_side.game_id = g.id
+           JOIN game_sides opp ON opp.game_id = g.id AND opp.side != team_side.side
            WHERE team_side.league = $1 AND team_side.team = $2
            ORDER BY g.date DESC"#,
         params.league,
@@ -83,7 +83,7 @@ pub async fn handle(
         };
 
         game_rows.push(GameRow {
-            drive_file_id: row.drive_file_id.clone(),
+            game_id: row.id.clone(),
             date: row.date.to_string(),
             side: side.clone(),
             our_score,

@@ -15,7 +15,7 @@ pub struct PlayerParams {
 
 #[derive(Serialize)]
 struct GameRow {
-    drive_file_id: String,
+    game_id: String,
     date: String,
     opponent_team: String,
     opponent_league: String,
@@ -32,7 +32,7 @@ struct GameRow {
 
 #[derive(Serialize)]
 struct GameSummaryEntry {
-    drive_file_id: String,
+    game_id: String,
     date: String,
     opponent_team: String,
     opponent_league: String,
@@ -52,20 +52,21 @@ pub async fn handle(
     Query(params): Query<PlayerParams>,
 ) -> Result<Html<String>, AppError> {
     let rows = sqlx::query!(
-        r#"SELECT g.drive_file_id, g.date, g.periods,
+        r#"SELECT g.id, g.date, g.periods,
                   gs.side as "side!: String",
                   opp.league as opp_league, opp.team as opp_team
            FROM games g
-           JOIN game_skaters gs ON gs.drive_file_id = g.drive_file_id
-           JOIN game_sides player_side ON player_side.drive_file_id = g.drive_file_id AND player_side.side = gs.side
-           JOIN game_sides opp ON opp.drive_file_id = g.drive_file_id AND opp.side != gs.side
+           JOIN game_skaters gs ON gs.game_id = g.id
+           JOIN game_sides player_side ON player_side.game_id = g.id AND player_side.side = gs.side
+           JOIN game_sides opp ON opp.game_id = g.id AND opp.side != gs.side
            WHERE player_side.league = $1 AND gs.name = $2 AND gs.number = $3
            ORDER BY g.date DESC"#,
         params.league,
         params.name,
         params.number,
     )
-    .fetch_all(&*state.pool).await?;
+    .fetch_all(&*state.pool)
+    .await?;
 
     let mut game_rows: Vec<GameRow> = Vec::new();
     let mut career = CareerStats {
@@ -141,7 +142,7 @@ pub async fn handle(
         }
 
         game_rows.push(GameRow {
-            drive_file_id: row.drive_file_id.clone(),
+            game_id: row.id.clone(),
             date: row.date.to_string(),
             opponent_team,
             opponent_league,
@@ -157,14 +158,14 @@ pub async fn handle(
         });
     }
 
-    let file_ids: Vec<String> = rows.iter().map(|r| r.drive_file_id.clone()).collect();
+    let game_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
     let mut game_summary_rows: Vec<GameSummaryEntry> = Vec::new();
 
-    if !file_ids.is_empty() {
+    if !game_ids.is_empty() {
         let summary_rows = sqlx::query!(
-            r#"SELECT drive_file_id, side as "side!: String", stats
-               FROM game_summary WHERE drive_file_id = ANY($1)"#,
-            &file_ids,
+            r#"SELECT game_id, side as "side!: String", stats
+               FROM game_summary WHERE game_id = ANY($1)"#,
+            &game_ids,
         )
         .fetch_all(&*state.pool)
         .await?;
@@ -173,17 +174,17 @@ pub async fn handle(
         for r in summary_rows {
             let side_stats: SideStats =
                 serde_json::from_value(r.stats).map_err(anyhow::Error::from)?;
-            summary_map.insert((r.drive_file_id, r.side), side_stats.players);
+            summary_map.insert((r.game_id, r.side), side_stats.players);
         }
 
         for (row, game_row) in rows.iter().zip(game_rows.iter()) {
-            let key = (row.drive_file_id.clone(), row.side.clone());
+            let key = (row.id.clone(), row.side.clone());
             if let Some(players) = summary_map.get(&key) {
                 // Match by number only: numbers are unique within a team, and name
                 // normalization may differ between the IGRF roster and summary sheet.
                 if let Some(stats) = players.iter().find(|p| p.number == params.number) {
                     game_summary_rows.push(GameSummaryEntry {
-                        drive_file_id: row.drive_file_id.clone(),
+                        game_id: row.id.clone(),
                         date: game_row.date.clone(),
                         opponent_team: game_row.opponent_team.clone(),
                         opponent_league: game_row.opponent_league.clone(),

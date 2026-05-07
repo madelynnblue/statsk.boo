@@ -54,7 +54,7 @@
     <tbody>
     {% for g in games %}
       <tr>
-        <td><a href="/game/{{ g.drive_file_id }}">{{ g.date | default("") }}</a></td>
+        <td><a href="/game/{{ g.game_id }}">{{ g.date | default("") }}</a></td>
         <td><a href="/team?league={{ g.home_league | urlencode }}&team={{ g.home_team | urlencode }}">{{ g.home_team }}</a></td>
         <td><a href="/team?league={{ g.away_league | urlencode }}&team={{ g.away_team | urlencode }}">{{ g.away_team }}</a></td>
         <td>

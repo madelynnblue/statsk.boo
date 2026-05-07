@@ -24,7 +24,7 @@ struct TeamResult {
 
 #[derive(serde::Serialize)]
 struct GameResult {
-    drive_file_id: String,
+    game_id: String,
     date: chrono::NaiveDate,
     home_team: String,
     home_league: String,
@@ -46,7 +46,7 @@ pub async fn handle(
         let player_rows = sqlx::query!(
             r#"SELECT DISTINCT gs.name, gs.number, gsi.league, gsi.team
                FROM game_skaters gs
-               JOIN game_sides gsi ON gsi.drive_file_id = gs.drive_file_id AND gsi.side = gs.side
+               JOIN game_sides gsi ON gsi.game_id = gs.game_id AND gsi.side = gs.side
                WHERE gs.name ILIKE $1
                ORDER BY 4, 1
                LIMIT 200"#,
@@ -98,18 +98,18 @@ pub async fn handle(
             .collect();
 
         let game_rows = sqlx::query!(
-            r#"SELECT DISTINCT ON (g.date, g.drive_file_id)
-                      g.drive_file_id, g.date,
+            r#"SELECT DISTINCT ON (g.date, g.id)
+                      g.id, g.date,
                       home.team as home_team, home.league as home_league,
                       away.team as away_team, away.league as away_league,
                       g.tournament, g.venue_name
                FROM games g
-               JOIN game_sides home ON home.drive_file_id = g.drive_file_id AND home.side = 'home'
-               JOIN game_sides away ON away.drive_file_id = g.drive_file_id AND away.side = 'away'
+               JOIN game_sides home ON home.game_id = g.id AND home.side = 'home'
+               JOIN game_sides away ON away.game_id = g.id AND away.side = 'away'
                WHERE g.tournament ILIKE $1
                   OR g.venue_name ILIKE $1
                   OR g.venue_city ILIKE $1
-               ORDER BY g.date DESC, g.drive_file_id
+               ORDER BY g.date DESC, g.id
                LIMIT 200"#,
             &pattern,
         )
@@ -119,7 +119,7 @@ pub async fn handle(
         let games: Vec<GameResult> = game_rows
             .into_iter()
             .map(|r| GameResult {
-                drive_file_id: r.drive_file_id,
+                game_id: r.id,
                 date: r.date,
                 home_team: r.home_team.unwrap_or_default(),
                 home_league: r.home_league.unwrap_or_default(),

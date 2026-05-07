@@ -1,7 +1,8 @@
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 CREATE TABLE IF NOT EXISTS games (
-    drive_file_id  TEXT PRIMARY KEY,
+    id             TEXT PRIMARY KEY,
+    source         TEXT NOT NULL CHECK (source IN ('drive', 'file')),
     date           DATE NOT NULL,
     ingested_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     parser_version INTEGER NOT NULL,
@@ -18,28 +19,28 @@ CREATE TABLE IF NOT EXISTS games (
 );
 
 CREATE TABLE IF NOT EXISTS game_sides (
-    drive_file_id TEXT NOT NULL REFERENCES games ON DELETE CASCADE,
-    side          TEXT NOT NULL CHECK (side IN ('home','away')),
-    league        TEXT,
-    team          TEXT,
-    color         TEXT,
-    PRIMARY KEY (drive_file_id, side)
+    game_id TEXT NOT NULL REFERENCES games ON DELETE CASCADE,
+    side    TEXT NOT NULL CHECK (side IN ('home','away')),
+    league  TEXT,
+    team    TEXT,
+    color   TEXT,
+    PRIMARY KEY (game_id, side)
 );
 
 CREATE TABLE IF NOT EXISTS game_skaters (
-    drive_file_id TEXT NOT NULL,
-    side          TEXT NOT NULL,
-    number        TEXT NOT NULL,
-    name          TEXT NOT NULL,
-    PRIMARY KEY (drive_file_id, side, number),
-    FOREIGN KEY (drive_file_id, side) REFERENCES game_sides ON DELETE CASCADE
+    game_id TEXT NOT NULL,
+    side    TEXT NOT NULL,
+    number  TEXT NOT NULL,
+    name    TEXT NOT NULL,
+    PRIMARY KEY (game_id, side, number),
+    FOREIGN KEY (game_id, side) REFERENCES game_sides ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS game_summary (
-    drive_file_id TEXT NOT NULL REFERENCES games ON DELETE CASCADE,
-    side          TEXT NOT NULL CHECK (side IN ('home','away')),
-    stats         JSONB NOT NULL,
-    PRIMARY KEY (drive_file_id, side)
+    game_id TEXT NOT NULL REFERENCES games ON DELETE CASCADE,
+    side    TEXT NOT NULL CHECK (side IN ('home','away')),
+    stats   JSONB NOT NULL,
+    PRIMARY KEY (game_id, side)
 );
 
 -- Index page ORDER BY / LIMIT
@@ -70,4 +71,3 @@ CREATE INDEX IF NOT EXISTS game_sides_league_team_idx ON game_sides (league, tea
 CREATE INDEX IF NOT EXISTS games_tournament_idx ON games USING GIN (tournament gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS games_venue_name_idx ON games USING GIN (venue_name gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS games_venue_city_idx ON games USING GIN (venue_city gin_trgm_ops);
-

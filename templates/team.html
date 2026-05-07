@@ -18,7 +18,7 @@
   <tbody>
   {% for g in games %}
     <tr>
-      <td><a href="/game/{{ g.drive_file_id }}">{{ g.date }}</a></td>
+      <td><a href="/game/{{ g.game_id }}">{{ g.date }}</a></td>
       <td><a href="/team?league={{ g.opponent_league | urlencode }}&team={{ g.opponent_team | urlencode }}">{{ g.opponent_team }}</a><br><small>{{ g.opponent_league }}</small></td>
       <td>{{ g.our_score }}–{{ g.their_score }}</td>
       <td><strong>{{ g.result }}</strong></td>

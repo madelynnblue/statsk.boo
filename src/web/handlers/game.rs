@@ -8,15 +8,14 @@ use serde::Serialize;
 
 pub async fn handle(
     State(state): State<AppState>,
-    Path(drive_file_id): Path<String>,
+    Path(game_id): Path<String>,
 ) -> Result<Html<String>, AppError> {
-    let file_id = drive_file_id.clone();
     let row = sqlx::query!(
-        r#"SELECT date, version, tournament, host_league,
+        r#"SELECT date, source, version, tournament, host_league,
                   venue_name, venue_city, venue_state,
                   periods, penalties
-           FROM games WHERE drive_file_id = $1"#,
-        drive_file_id,
+           FROM games WHERE id = $1"#,
+        game_id,
     )
     .fetch_optional(&*state.pool)
     .await?
@@ -24,8 +23,8 @@ pub async fn handle(
 
     let side_rows = sqlx::query!(
         r#"SELECT side as "side!: String", league, team, color
-           FROM game_sides WHERE drive_file_id = $1"#,
-        drive_file_id,
+           FROM game_sides WHERE game_id = $1"#,
+        game_id,
     )
     .fetch_all(&*state.pool)
     .await?;
@@ -35,16 +34,16 @@ pub async fn handle(
 
     let skater_rows = sqlx::query!(
         r#"SELECT side as "side!: String", number, name
-           FROM game_skaters WHERE drive_file_id = $1"#,
-        drive_file_id,
+           FROM game_skaters WHERE game_id = $1"#,
+        game_id,
     )
     .fetch_all(&*state.pool)
     .await?;
 
     let summary_rows = sqlx::query!(
         r#"SELECT side as "side!: String", stats
-           FROM game_summary WHERE drive_file_id = $1"#,
-        drive_file_id,
+           FROM game_summary WHERE game_id = $1"#,
+        game_id,
     )
     .fetch_all(&*state.pool)
     .await?;
@@ -137,7 +136,8 @@ pub async fn handle(
         away_names,
         home_penalties,
         away_penalties,
-        file_id,
+        game_id => game_id,
+        source => row.source,
     })?;
     Ok(Html(html))
 }

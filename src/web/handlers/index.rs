@@ -6,12 +6,12 @@ use serde::Serialize;
 
 pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppError> {
     let rows = sqlx::query!(
-        r#"SELECT g.drive_file_id, g.date, g.periods,
+        r#"SELECT g.id, g.date, g.periods,
                   home.team as home_team, home.league as home_league,
                   away.team as away_team, away.league as away_league
            FROM games g
-           JOIN game_sides home ON home.drive_file_id = g.drive_file_id AND home.side = 'home'
-           JOIN game_sides away ON away.drive_file_id = g.drive_file_id AND away.side = 'away'
+           JOIN game_sides home ON home.game_id = g.id AND home.side = 'home'
+           JOIN game_sides away ON away.game_id = g.id AND away.side = 'away'
            ORDER BY g.date DESC, g.ingested_at DESC
            LIMIT 10"#,
     )
@@ -25,7 +25,7 @@ pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppEr
         let home_score = periods_score(&periods, "home");
         let away_score = periods_score(&periods, "away");
         games.push(RecentGame {
-            drive_file_id: r.drive_file_id.clone(),
+            game_id: r.id.clone(),
             date: r.date,
             home_score,
             away_score,
@@ -43,7 +43,7 @@ pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppEr
 
 #[derive(Serialize)]
 struct RecentGame {
-    drive_file_id: String,
+    game_id: String,
     date: chrono::NaiveDate,
     home_score: i16,
     away_score: i16,

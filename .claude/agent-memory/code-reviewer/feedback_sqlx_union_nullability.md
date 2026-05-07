@@ -4,14 +4,14 @@ description: For sqlx::query! with UNION/UNION ALL, override Option inference wi
 type: feedback
 ---
 
-When a `sqlx::query!` has a `UNION` or `UNION ALL`, sqlx infers all columns as `Option<T>` even if the underlying columns are NOT NULL. Reaching for `.unwrap_or_default()` on a PRIMARY KEY column (e.g., `drive_file_id`) silently produces an empty string and broken links instead of a panic.
+When a `sqlx::query!` has a `UNION` or `UNION ALL`, sqlx infers all columns as `Option<T>` even if the underlying columns are NOT NULL. Reaching for `.unwrap_or_default()` on a PRIMARY KEY column silently produces an empty string and broken links instead of a panic.
 
 **Why:** The PK is guaranteed non-null by the schema, so an Option here represents a sqlx limitation, not a real possibility. `unwrap_or_default()` masks any future regression.
 
 **How to apply:** Use the sqlx column-aliasing override syntax:
 ```rust
 sqlx::query!(
-    r#"SELECT drive_file_id as "drive_file_id!: String",
+    r#"SELECT id as "id!: String",
               date,
               data as "data!: serde_json::Value"
        FROM games

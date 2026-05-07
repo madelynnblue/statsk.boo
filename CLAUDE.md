@@ -35,16 +35,16 @@ WSB (WFTDA Statsbook Browser) downloads WFTDA statsbook `.xlsx` files from a pub
 **Identity:**
 - Player = `(league, name, number)` triple — all three together are the identity
 - Team = `(league, team)` pair
-- Game = Google Drive `file_id` (the table's primary key)
+- Game = unique `id` text PK (Drive file ID for `source='drive'`, relative path for `source='file'`)
 
 **Database:** Relational schema with five tables:
-- `games` (`drive_file_id TEXT PK`, `date`, `ingested_at`, `parser_version`, `version`, `tournament`, `host_league`, `venue_*`, `periods JSONB`, `penalties JSONB`)
-- `game_sides` (`drive_file_id FK`, `side`, `league`, `team`, `color`)
-- `game_skaters` (`drive_file_id FK`, `side`, `number`, `name`)
-- `game_summary` (`drive_file_id FK`, `side`, `stats JSONB`)
+- `games` (`id TEXT PK`, `source TEXT` (`'drive'`|`'file'`), `date`, `ingested_at`, `parser_version`, `version`, `tournament`, `host_league`, `venue_*`, `periods JSONB`, `penalties JSONB`)
+- `game_sides` (`game_id FK`, `side`, `league`, `team`, `color`)
+- `game_skaters` (`game_id FK`, `side`, `number`, `name`)
+- `game_summary` (`game_id FK`, `side`, `stats JSONB`)
 - `game_*_search` materialized views for full-text search
 
-**SQL queries:** All use runtime `sqlx::query().bind()` — the project avoids compile-time macros (`query!`, `query_as!`) because they require a live database at build time. Type extraction uses `row.try_get::<Type, _>(col)?`.
+**SQL queries:** All use compile-time `sqlx::query!` macros, which validate SQL against the live database schema at build time. A running CockroachDB instance with the `wsb` schema applied is required to compile.
 
 **Migrations:** `sqlx::migrate!("./migrations").set_locking(false)` — locking is disabled because CockroachDB doesn't support PostgreSQL advisory locks.
 
