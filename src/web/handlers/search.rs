@@ -11,7 +11,6 @@ pub struct SearchParams {
 #[derive(serde::Serialize)]
 struct PlayerResult {
     league: String,
-    team: String,
     name: String,
     number: String,
 }
@@ -44,11 +43,11 @@ pub async fn handle(
         let pattern = format!("%{}%", q);
 
         let player_rows = sqlx::query!(
-            r#"SELECT DISTINCT gs.name, gs.number, gsi.league, gsi.team
+            r#"SELECT DISTINCT gs.name, gs.number, gsi.league
                FROM game_skaters gs
                JOIN game_sides gsi ON gsi.game_id = gs.game_id AND gsi.side = gs.side
                WHERE gs.name ILIKE $1
-               ORDER BY 4, 1
+               ORDER BY 3, 1
                LIMIT 200"#,
             &pattern,
         )
@@ -59,7 +58,6 @@ pub async fn handle(
             .iter()
             .map(|r| PlayerResult {
                 league: r.league.clone().unwrap_or_default(),
-                team: r.team.clone().unwrap_or_default(),
                 name: r.name.clone(),
                 number: r.number.clone(),
             })

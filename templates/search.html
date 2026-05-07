@@ -9,13 +9,12 @@
   {% if players %}
   <h2>Players</h2>
   <table>
-    <thead><tr><th>Name</th><th>#</th><th>Team</th><th>League</th></tr></thead>
+    <thead><tr><th>Name</th><th>#</th><th>League</th></tr></thead>
     <tbody>
     {% for p in players %}
       <tr>
         <td><a href="/player?league={{ p.league | urlencode }}&name={{ p.name | urlencode }}&number={{ p.number | urlencode }}">{{ p.name }}</a></td>
         <td>{{ p.number }}</td>
-        <td><a href="/team?league={{ p.league | urlencode }}&team={{ p.team | urlencode }}">{{ p.team }}</a></td>
         <td><a href="/league?league={{ p.league | urlencode }}">{{ p.league }}</a></td>
       </tr>
     {% endfor %}
