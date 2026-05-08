@@ -1,3 +1,4 @@
+pub mod canon;
 pub mod config;
 pub mod db;
 pub mod ingest;

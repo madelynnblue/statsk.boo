@@ -19,13 +19,20 @@ CREATE TABLE IF NOT EXISTS games (
 );
 
 CREATE TABLE IF NOT EXISTS game_sides (
-    game_id TEXT NOT NULL REFERENCES games ON DELETE CASCADE,
-    side    TEXT NOT NULL CHECK (side IN ('home','away')),
-    league  TEXT,
-    team    TEXT,
-    color   TEXT,
+    game_id        TEXT NOT NULL REFERENCES games ON DELETE CASCADE,
+    side           TEXT NOT NULL CHECK (side IN ('home','away')),
+    league         TEXT,
+    team           TEXT,
+    color          TEXT,
+    league_canonical TEXT NOT NULL,
+    team_canonical   TEXT NOT NULL,
     PRIMARY KEY (game_id, side)
 );
+
+-- Exact team/league canonical lookup + search dedup
+CREATE INDEX IF NOT EXISTS game_sides_league_canonical_idx ON game_sides (league_canonical);
+CREATE INDEX IF NOT EXISTS game_sides_league_team_canonical_idx ON game_sides (league_canonical, team_canonical);
+
 
 CREATE TABLE IF NOT EXISTS game_skaters (
     game_id TEXT NOT NULL,
@@ -63,9 +70,6 @@ CREATE INDEX IF NOT EXISTS game_skaters_name_idx ON game_skaters USING GIN (name
 -- Search: team/league ILIKE
 CREATE INDEX IF NOT EXISTS game_sides_league_idx ON game_sides USING GIN (league gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS game_sides_team_idx ON game_sides USING GIN (team gin_trgm_ops);
-
--- Exact team/league lookup (team and league handlers)
-CREATE INDEX IF NOT EXISTS game_sides_league_team_idx ON game_sides (league, team);
 
 -- Search: tournament / venue ILIKE
 CREATE INDEX IF NOT EXISTS games_tournament_idx ON games USING GIN (tournament gin_trgm_ops);

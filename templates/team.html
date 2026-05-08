@@ -8,7 +8,7 @@
 <div class="stats-grid">
   <div class="stat-card"><div class="stat">{{ record.wins }}</div><div class="stat-label">Wins</div></div>
   <div class="stat-card"><div class="stat">{{ record.losses }}</div><div class="stat-label">Losses</div></div>
-  <div class="stat-card"><div class="stat">{{ record.ties }}</div><div class="stat-label">Ties</div></div>
+  {% if record.ties > 0 %}<div class="stat-card"><div class="stat">{{ record.ties }}</div><div class="stat-label">Ties</div></div>{% endif %}
 </div>
 
 <h2>Game History</h2>

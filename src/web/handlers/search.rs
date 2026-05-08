@@ -1,3 +1,7 @@
+use std::collections::{HashMap, HashSet};
+
+use crate::canon::{best_name, canonicalize_league, canonicalize_team};
+use crate::models::{Period, periods_score};
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
 use axum::response::Html;
@@ -29,6 +33,8 @@ struct GameResult {
     home_league: String,
     away_team: String,
     away_league: String,
+    home_score: i16,
+    away_score: i16,
     tournament: Option<String>,
     venue_name: Option<String>,
 }
@@ -43,7 +49,7 @@ pub async fn handle(
         let pattern = format!("%{}%", q);
 
         let player_rows = sqlx::query!(
-            r#"SELECT DISTINCT gs.name, gs.number, gsi.league
+            r#"SELECT gs.name, gs.number, gsi.league
                FROM game_skaters gs
                JOIN game_sides gsi ON gsi.game_id = gs.game_id AND gsi.side = gs.side
                WHERE gs.name ILIKE $1
@@ -54,17 +60,22 @@ pub async fn handle(
         .fetch_all(&*state.pool)
         .await?;
 
-        let players: Vec<PlayerResult> = player_rows
-            .iter()
-            .map(|r| PlayerResult {
-                league: r.league.clone().unwrap_or_default(),
-                name: r.name.clone(),
-                number: r.number.clone(),
-            })
-            .collect();
+        let mut seen = HashSet::new();
+        let mut players: Vec<PlayerResult> = Vec::new();
+        for r in &player_rows {
+            let lc = canonicalize_league(r.league.as_deref().unwrap_or(""));
+            let key = (lc, r.name.clone(), r.number.clone());
+            if seen.insert(key) {
+                players.push(PlayerResult {
+                    league: r.league.clone().unwrap_or_default(),
+                    name: r.name.clone(),
+                    number: r.number.clone(),
+                });
+            }
+        }
 
         let team_rows = sqlx::query!(
-            r#"SELECT DISTINCT league, team FROM game_sides
+            r#"SELECT league, team FROM game_sides
                WHERE league ILIKE $1 OR team ILIKE $1
                ORDER BY 1, 2
                LIMIT 200"#,
@@ -73,13 +84,24 @@ pub async fn handle(
         .fetch_all(&*state.pool)
         .await?;
 
-        let teams: Vec<TeamResult> = team_rows
-            .iter()
-            .map(|r| TeamResult {
-                league: r.league.clone().unwrap_or_default(),
-                team: r.team.clone().unwrap_or_default(),
+        let mut team_groups: HashMap<(String, String), Vec<(String, String)>> = HashMap::new();
+        for r in &team_rows {
+            let lc = canonicalize_league(r.league.as_deref().unwrap_or(""));
+            let tc = canonicalize_team(r.league.as_deref(), r.team.as_deref().unwrap_or(""));
+            team_groups
+                .entry((lc, tc))
+                .or_default()
+                .push((r.league.clone().unwrap_or_default(), r.team.clone().unwrap_or_default()));
+        }
+        let mut teams: Vec<TeamResult> = team_groups
+            .into_values()
+            .filter_map(|variants| {
+                let league = best_name(variants.iter().map(|(l, _)| l.as_str()))?;
+                let team = best_name(variants.iter().map(|(_, t)| t.as_str()))?;
+                Some(TeamResult { league, team })
             })
             .collect();
+        teams.sort_by(|a, b| a.league.cmp(&b.league).then(a.team.cmp(&b.team)));
 
         let league_rows = sqlx::query!(
             r#"SELECT DISTINCT league FROM game_sides
@@ -90,14 +112,22 @@ pub async fn handle(
         .fetch_all(&*state.pool)
         .await?;
 
-        let leagues: Vec<String> = league_rows
-            .iter()
-            .filter_map(|r| r.league.clone())
+        let mut league_groups: HashMap<String, Vec<String>> = HashMap::new();
+        for r in &league_rows {
+            if let Some(ref league) = r.league {
+                let lc = canonicalize_league(league);
+                league_groups.entry(lc).or_default().push(league.clone());
+            }
+        }
+        let mut leagues: Vec<String> = league_groups
+            .into_values()
+            .filter_map(|variants| best_name(variants.iter().map(|s| s.as_str())))
             .collect();
+        leagues.sort();
 
         let game_rows = sqlx::query!(
             r#"SELECT DISTINCT ON (g.date, g.id)
-                      g.id, g.date,
+                      g.id, g.date, g.periods,
                       home.team as home_team, home.league as home_league,
                       away.team as away_team, away.league as away_league,
                       g.tournament, g.venue_name
@@ -114,19 +144,23 @@ pub async fn handle(
         .fetch_all(&*state.pool)
         .await?;
 
-        let games: Vec<GameResult> = game_rows
-            .into_iter()
-            .map(|r| GameResult {
+        let mut games: Vec<GameResult> = Vec::new();
+        for r in game_rows {
+            let periods: Vec<Period> =
+                serde_json::from_value(r.periods).map_err(anyhow::Error::from)?;
+            games.push(GameResult {
                 game_id: r.id,
                 date: r.date,
                 home_team: r.home_team.unwrap_or_default(),
                 home_league: r.home_league.unwrap_or_default(),
                 away_team: r.away_team.unwrap_or_default(),
                 away_league: r.away_league.unwrap_or_default(),
+                home_score: periods_score(&periods, "home"),
+                away_score: periods_score(&periods, "away"),
                 tournament: r.tournament,
                 venue_name: r.venue_name,
-            })
-            .collect();
+            });
+        }
 
         (players, teams, leagues, games)
     } else {

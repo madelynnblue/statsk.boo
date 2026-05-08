@@ -1,6 +1,7 @@
 pub mod drive;
 pub mod parse;
 
+use crate::canon::{canonicalize_league, canonicalize_team};
 use crate::config::Config;
 use crate::models::{GameData, periods_score};
 use anyhow::Context;
@@ -141,27 +142,33 @@ async fn run_ingest(
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
-    let sem = Arc::new(tokio::sync::Semaphore::new(cores));
+    let process_sem = Arc::new(tokio::sync::Semaphore::new(cores));
     let mut set = tokio::task::JoinSet::new();
 
     for file in files {
-        let permit = sem.clone().acquire_owned().await?;
+        let permit = process_sem.clone().acquire_owned().await?;
         let pool = pool.clone();
         let source = source.clone();
         let tx_sem = tx_sem.clone();
         set.spawn(async move {
             let _permit = permit;
             let name = file.name.clone();
-            match process_file(&pool, &source, &file, &tx_sem).await {
-                Ok(true) => info!("ingested {name}"),
-                Ok(false) => info!("skipped {name} (already present)"),
-                Err(e) => warn!("skipping {name}: {e:#}"),
-            }
+            let res = process_file(&pool, &source, &file, &tx_sem).await;
+            (name, res)
         });
     }
 
+    let mut skipped = 0;
     while let Some(result) = set.join_next().await {
-        result?;
+        let (name, result) = result?;
+        match result {
+            Ok(true) => info!("ingested {name}"),
+            Ok(false) => skipped += 1,
+            Err(e) => warn!("skipping {name}: {e:#}"),
+        }
+    }
+    if skipped > 0 {
+        info!("skipped {skipped} (already present)");
     }
 
     Ok(())
@@ -347,13 +354,18 @@ async fn insert_parsed_file(
         .await?;
 
         for (side_key, side) in [("home", &game.home), ("away", &game.away)] {
+            let league_canonical = canonicalize_league(side.league.as_deref().unwrap_or(""));
+            let team_canonical =
+                canonicalize_team(side.league.as_deref(), side.team.as_deref().unwrap_or(""));
             sqlx::query!(
-                "INSERT INTO game_sides (game_id, side, league, team, color) VALUES ($1, $2, $3, $4, $5)",
+                "INSERT INTO game_sides (game_id, side, league, team, color, league_canonical, team_canonical) VALUES ($1, $2, $3, $4, $5, $6, $7)",
                 file_id,
                 side_key,
                 side.league,
                 side.team,
                 side.color,
+                league_canonical,
+                team_canonical,
             )
             .execute(&mut *tx)
             .await?;

@@ -7,7 +7,7 @@
 <h2>Teams</h2>
 <ul>
 {% for team in teams %}
-  <li><a href="/team?league={{ league | urlencode }}&team={{ team | urlencode }}">{{ team }}</a></li>
+  <li><a href="/team?league={{ league | urlencode }}&team={{ team.team | urlencode }}">{{ team.team }}</a></li>
 {% endfor %}
 </ul>
 {% else %}

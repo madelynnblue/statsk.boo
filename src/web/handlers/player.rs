@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::canon::canonicalize_league;
 use crate::models::{Period, SideStats, SummaryPlayer, periods_score};
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
@@ -51,22 +52,34 @@ pub async fn handle(
     State(state): State<AppState>,
     Query(params): Query<PlayerParams>,
 ) -> Result<Html<String>, AppError> {
+    let league_canonical = canonicalize_league(&params.league);
+
     let rows = sqlx::query!(
         r#"SELECT g.id, g.date, g.periods,
                   gs.side as "side!: String",
+                  player_side.league, player_side.team,
                   opp.league as opp_league, opp.team as opp_team
            FROM games g
            JOIN game_skaters gs ON gs.game_id = g.id
            JOIN game_sides player_side ON player_side.game_id = g.id AND player_side.side = gs.side
            JOIN game_sides opp ON opp.game_id = g.id AND opp.side != gs.side
-           WHERE player_side.league = $1 AND gs.name = $2 AND gs.number = $3
+           WHERE player_side.league_canonical = $1 AND gs.name = $2 AND gs.number = $3
            ORDER BY g.date DESC"#,
-        params.league,
+        league_canonical,
         params.name,
         params.number,
     )
     .fetch_all(&*state.pool)
     .await?;
+
+    let display_league = rows
+        .first()
+        .and_then(|r| r.league.clone())
+        .unwrap_or_else(|| params.league.clone());
+    let display_team = rows
+        .first()
+        .and_then(|r| r.team.clone())
+        .unwrap_or_default();
 
     let mut game_rows: Vec<GameRow> = Vec::new();
     let mut career = CareerStats {
@@ -197,7 +210,9 @@ pub async fn handle(
 
     let tmpl = state.env.get_template("player.html")?;
     let html = tmpl.render(minijinja::context! {
-        league => params.league,
+        league_canonical => league_canonical,
+        league => display_league,
+        team   => display_team,
         name   => params.name,
         number => params.number,
         career => career,
