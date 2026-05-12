@@ -51,6 +51,33 @@ pub struct DriveClient {
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
+/// Retry transient network errors (TLS failures, connection drops) with
+/// exponential backoff. Max 3 attempts total (1 original + 2 retries).
+async fn with_retry<T, E: std::fmt::Display, F>(f: impl Fn() -> F) -> Result<T>
+where
+    F: std::future::Future<Output = std::result::Result<T, E>>,
+{
+    let mut delay = std::time::Duration::from_millis(200);
+    for attempt in 0..3 {
+        match f().await {
+            Ok(val) => return Ok(val),
+            Err(e) => {
+                if attempt >= 2 {
+                    return Err(anyhow::anyhow!("{e}"));
+                }
+                tracing::warn!(
+                    "transient drive API error (attempt {}/2), retrying in {:?}: {e}",
+                    attempt + 1,
+                    delay,
+                );
+                tokio::time::sleep(delay).await;
+                delay *= 2;
+            }
+        }
+    }
+    unreachable!()
+}
+
 impl DriveClient {
     pub fn new(api_key: String) -> Self {
         let mut headers = header::HeaderMap::new();
@@ -95,25 +122,7 @@ impl DriveClient {
         let mut page_token: Option<String> = None;
 
         loop {
-            let mut req = self
-                .client
-                .get("https://www.googleapis.com/drive/v3/files")
-                .query(&[
-                    ("q", q.as_str()),
-                    ("key", &self.api_key),
-                    ("fields", "nextPageToken,files(id,name,modifiedTime)"),
-                    ("pageSize", "1000"),
-                ]);
-            if let Some(token) = &page_token {
-                req = req.query(&[("pageToken", token.as_str())]);
-            }
-            let resp: FileList = req
-                .send()
-                .await?
-                .error_for_status()
-                .context("Drive API error")?
-                .json()
-                .await?;
+            let resp: FileList = self.send_list_request(&q, &page_token).await?;
             all_files.extend(resp.files);
             match resp.next_page_token {
                 Some(t) => page_token = Some(t),
@@ -123,20 +132,50 @@ impl DriveClient {
         Ok(all_files)
     }
 
+    async fn send_list_request(
+        &self,
+        q: &str,
+        page_token: &Option<String>,
+    ) -> Result<FileList> {
+        let api_key = &self.api_key;
+        with_retry(|| async {
+            let mut req = self
+                .client
+                .get("https://www.googleapis.com/drive/v3/files")
+                .query(&[
+                    ("q", q),
+                    ("key", api_key),
+                    ("fields", "nextPageToken,files(id,name,modifiedTime)"),
+                    ("pageSize", "1000"),
+                ]);
+            if let Some(token) = page_token {
+                req = req.query(&[("pageToken", token.as_str())]);
+            }
+            req.send().await
+                .map_err(|e| format!("network error: {e}"))?
+                .error_for_status()
+                .map_err(|e| format!("HTTP error: {e}"))?
+                .json::<FileList>().await
+                .map_err(|e| format!("parse error: {e}"))
+        }).await
+    }
+
     pub async fn download_file(&self, file_id: &str) -> Result<Vec<u8>> {
-        let bytes = self
-            .client
-            .get(format!(
-                "https://www.googleapis.com/drive/v3/files/{file_id}"
-            ))
-            .query(&[("alt", "media"), ("key", &self.api_key)])
-            .send()
-            .await?
-            .error_for_status()
-            .context("Drive download error")?
-            .bytes()
-            .await?;
-        Ok(bytes.to_vec())
+        let file_id = file_id.to_string();
+        let api_key = &self.api_key;
+        with_retry(|| async {
+            let resp = self
+                .client
+                .get(format!("https://www.googleapis.com/drive/v3/files/{file_id}"))
+                .query(&[("alt", "media"), ("key", api_key)])
+                .send().await
+                .map_err(|e| format!("network error: {e}"))?
+                .error_for_status()
+                .map_err(|e| format!("HTTP error: {e}"))?;
+            let bytes = resp.bytes().await
+                .map_err(|e| format!("body read error: {e}"))?;
+            Ok::<Vec<u8>, String>(bytes.to_vec())
+        }).await
     }
 }
 
