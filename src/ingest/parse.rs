@@ -1,11 +1,12 @@
 use crate::models::*;
 use anyhow::{Context, Result};
 use calamine::{Data, DataType, Range, Reader, Xlsx, open_workbook_from_rs};
+use std::collections::HashSet;
 use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 8;
+pub const PARSER_VERSION: i64 = 9;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes)?;
@@ -19,10 +20,14 @@ pub fn parse_statsbook_with_date(bytes: &[u8]) -> Result<(GameData, Option<chron
     let version = parse_version(&mut wb);
     let venue = parse_venue(&mut wb)?;
     let (tournament, host_league, date) = parse_igrf_meta(&mut wb)?;
-    let home = parse_team(&mut wb, 1, 2, 13, 20)?;
-    let away = parse_team(&mut wb, 8, 9, 13, 20)?;
+    let mut home = parse_team(&mut wb, 1, 2, 13, 20)?;
+    let mut away = parse_team(&mut wb, 8, 9, 13, 20)?;
     let mut periods = parse_scores(&mut wb)?;
     merge_lineups(&mut wb, &mut periods)?;
+    let home_players = players_in_jams(&periods, "home");
+    let away_players = players_in_jams(&periods, "away");
+    home.skaters.retain(|s| home_players.contains(&s.number));
+    away.skaters.retain(|s| away_players.contains(&s.number));
     let igrf = read_igrf_cells(&mut wb)?;
     let penalties = parse_penalties(&mut wb, &igrf)?;
     let game_summary = parse_game_summary(&mut wb, &igrf).ok();
@@ -44,6 +49,25 @@ pub fn parse_statsbook_with_date(bytes: &[u8]) -> Result<(GameData, Option<chron
 /// A `*` after a player number in the IGRF roster means they played 0 jams.
 fn is_zero_jam_player(number: &str) -> bool {
     number.ends_with('*')
+}
+
+fn players_in_jams(periods: &[Period], side: &str) -> HashSet<String> {
+    let mut numbers = HashSet::new();
+    for period in periods {
+        for jam in &period.jams {
+            let js = if side == "home" { &jam.home } else { &jam.away };
+            if let Some(ref n) = js.jammer {
+                numbers.insert(n.clone());
+            }
+            if let Some(ref n) = js.star_pass_jammer {
+                numbers.insert(n.clone());
+            }
+            for entry in &js.lineup {
+                numbers.insert(entry.number.clone());
+            }
+        }
+    }
+    numbers
 }
 
 fn cell_str(r: &Range<Data>, row: u32, col: u32) -> Option<String> {
@@ -477,7 +501,7 @@ fn parse_summary_player(
         return None;
     }
     let name = cell_str_with_formula(sheet, formulas, row, 1, igrf).unwrap_or_default();
-    Some(SummaryPlayer {
+    let summary = SummaryPlayer {
         number,
         name,
         jams_jammer: cell_opt_u8(sheet, row, 2),
@@ -516,7 +540,11 @@ fn parse_summary_player(
         vtar_pack_avg_plus_minus: cell_opt_f32(sheet, row, 35),
         total_vtar_avg_plus_minus: cell_opt_f32(sheet, row, 36),
         penalty_count: cell_opt_u8(sheet, row, 37),
-    })
+    };
+    if summary.jams_total.unwrap_or_default() == 0 {
+        return None;
+    }
+    Some(summary)
 }
 
 fn parse_summary_totals(sheet: &Range<Data>, row: u32) -> SummaryTotals {
