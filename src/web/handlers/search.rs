@@ -149,7 +149,7 @@ pub async fn handle(
             let periods: Vec<Period> =
                 serde_json::from_value(r.periods).map_err(anyhow::Error::from)?;
             games.push(GameResult {
-                game_id: r.canonical_id.unwrap_or_default(),
+                game_id: r.canonical_id,
                 date: r.date,
                 home_team: r.home_team.unwrap_or_default(),
                 home_league: r.home_league.unwrap_or_default(),

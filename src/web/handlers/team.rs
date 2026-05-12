@@ -94,7 +94,7 @@ pub async fn handle(
         };
 
         game_rows.push(GameRow {
-            game_id: row.canonical_id.clone().unwrap_or_default(),
+            game_id: row.canonical_id.clone(),
             date: row.date.to_string(),
             side: side.clone(),
             our_score,

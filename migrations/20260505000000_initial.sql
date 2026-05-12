@@ -15,8 +15,11 @@ CREATE TABLE IF NOT EXISTS games (
     periods        JSONB NOT NULL,
     penalties      JSONB NOT NULL,
     modified_time  TIMESTAMPTZ NOT NULL,
-    fingerprint    JSONB NOT NULL
+    fingerprint    JSONB NOT NULL,
+    canonical_id   TEXT NOT NULL
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS games_canonical_id_idx ON games (canonical_id) WHERE canonical_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS game_sides (
     game_id        TEXT NOT NULL REFERENCES games ON DELETE CASCADE,
@@ -32,7 +35,6 @@ CREATE TABLE IF NOT EXISTS game_sides (
 -- Exact team/league canonical lookup + search dedup
 CREATE INDEX IF NOT EXISTS game_sides_league_canonical_idx ON game_sides (league_canonical);
 CREATE INDEX IF NOT EXISTS game_sides_league_team_canonical_idx ON game_sides (league_canonical, team_canonical);
-
 
 CREATE TABLE IF NOT EXISTS game_skaters (
     game_id TEXT NOT NULL,
@@ -51,7 +53,7 @@ CREATE TABLE IF NOT EXISTS game_summary (
 );
 
 -- Index page ORDER BY / LIMIT
-CREATE INDEX IF NOT EXISTS games_date_ingested_idx ON games (date DESC, ingested_at DESC);
+CREATE INDEX IF NOT EXISTS games_date_ingested_idx ON games (date DESC, ingested_at DESC) STORING (periods);
 
 -- Ingest: MAX(ingested_at)
 CREATE INDEX IF NOT EXISTS games_ingested_at_idx ON games (ingested_at DESC);

@@ -155,7 +155,7 @@ pub async fn handle(
         }
 
         game_rows.push(GameRow {
-            game_id: row.canonical_id.clone().unwrap_or_default(),
+            game_id: row.canonical_id.clone(),
             date: row.date.to_string(),
             opponent_team,
             opponent_league,
@@ -197,7 +197,7 @@ pub async fn handle(
                 // normalization may differ between the IGRF roster and summary sheet.
                 if let Some(stats) = players.iter().find(|p| p.number == params.number) {
                     game_summary_rows.push(GameSummaryEntry {
-                        game_id: row.canonical_id.clone().unwrap_or_default(),
+                        game_id: row.canonical_id.clone(),
                         date: game_row.date.clone(),
                         opponent_team: game_row.opponent_team.clone(),
                         opponent_league: game_row.opponent_league.clone(),
