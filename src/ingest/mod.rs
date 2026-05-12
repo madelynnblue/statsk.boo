@@ -8,6 +8,8 @@ use anyhow::Context;
 use chrono::{DateTime, NaiveDate, Utc};
 use drive::DriveClient;
 use drive::DriveFile;
+use futures::StreamExt;
+use futures::stream::FuturesOrdered;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -103,9 +105,10 @@ pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
 
     // One transaction at a time: the fingerprint GIN scan reads the whole table snapshot,
     // which concurrent writes invalidate, causing RETRY_SERIALIZABLE on commit.
-    // `reingest_stale` runs its workers in parallel, so the semaphore serializes the
-    // DB transaction step across them. `run_ingest` itself is sequential (oldest-first)
-    // so the DB cursor `MAX(modified_time)` advances monotonically across restarts.
+    // Downloads and parsing run in parallel; only the DB transaction step is serialized.
+    // `run_ingest` commits in oldest-first order so MAX(modified_time) is a monotonic
+    // cursor: a crash leaves it pointing to the last committed file, and all remaining
+    // files have a larger modifiedTime and will be picked up on the next run.
     let tx_sem = Arc::new(tokio::sync::Semaphore::new(1));
 
     match reingest_stale(pool.clone(), source.clone(), tx_sem.clone()).await {
@@ -151,16 +154,48 @@ async fn run_ingest(
     let n = files.len();
     info!("found {n} candidate file(s)");
 
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let prep_sem = Arc::new(tokio::sync::Semaphore::new(cores));
+
+    // Spawn one prepare task per file (download + parse + read-only DB checks).
+    // Tasks are independent Tokio tasks, so they run concurrently even while commits
+    // are in progress. FuturesOrdered yields their JoinHandles in oldest-first order,
+    // so the commit loop below processes files in that same order.
+    let mut ordered: FuturesOrdered<_> = files
+        .into_iter()
+        .map(|file| {
+            let pool = pool.clone();
+            let source = source.clone();
+            let prep_sem = prep_sem.clone();
+            tokio::spawn(async move {
+                let _permit = prep_sem
+                    .acquire_owned()
+                    .await
+                    .expect("prep semaphore closed");
+                let name = file.name.clone();
+                let result = prepare_file(&pool, &source, &file).await;
+                (name, result)
+            })
+        })
+        .collect();
+
     let mut ingested = 0;
-    for (i, file) in files.iter().enumerate() {
-        let name = &file.name;
-        match process_file(&pool, &source, file, &tx_sem).await {
-            Ok(true) => {
-                info!("ingested ({}/{n}) {name}", i + 1);
-                ingested += 1;
-            }
-            Ok(false) => {}
+    let mut i = 0usize;
+    while let Some(join_result) = ordered.next().await {
+        i += 1;
+        let (name, prep_result) = join_result.expect("prepare task panicked");
+        match prep_result {
             Err(e) => warn!("skipping {name}: {e:#}"),
+            Ok(None) => {}
+            Ok(Some(prep)) => match commit_file(&pool, &tx_sem, prep).await {
+                Ok(()) => {
+                    info!("ingested ({i}/{n}) {name}");
+                    ingested += 1;
+                }
+                Err(e) => warn!("skipping {name}: {e:#}"),
+            },
         }
     }
     if ingested > 0 {
@@ -176,38 +211,246 @@ async fn last_ingest_at(pool: &PgPool) -> anyhow::Result<Option<chrono::DateTime
     Ok(row.ts)
 }
 
-async fn process_file(
+struct PreparedInsert {
+    file_id: String,
+    file_name: String,
+    modified_time: DateTime<Utc>,
+    source_str: &'static str,
+    file_exists: bool,
+    canonical_duplicate_id: Option<String>,
+    date: Option<NaiveDate>,
+    game: GameData,
+    canonical_id: String,
+    fingerprint_json: serde_json::Value,
+    periods: serde_json::Value,
+    penalties: serde_json::Value,
+    home_stats: Option<(serde_json::Value, serde_json::Value)>,
+}
+
+async fn prepare_file(
     pool: &PgPool,
     source: &FileSource,
     file: &DriveFile,
-    tx_sem: &tokio::sync::Semaphore,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<PreparedInsert>> {
     let modified_time: DateTime<Utc> = file.modified_time.parse()?;
 
-    // Skip if we already have this file at this (or a newer) modified time. This
-    // saves re-downloading on every poll for files in the `since` window that
-    // haven't actually changed.
-    let existing = sqlx::query!("SELECT modified_time FROM games WHERE id = $1", file.id,)
+    // Skip if we already have this file at this (or a newer) modified time.
+    let existing = sqlx::query!("SELECT modified_time FROM games WHERE id = $1", file.id)
         .fetch_optional(pool)
         .await?;
     let file_exists = existing.is_some();
     if let Some(existing) = existing
         && existing.modified_time >= modified_time
     {
-        return Ok(false);
+        return Ok(None);
     }
 
-    insert_parsed_file(
-        pool,
-        source,
-        &file.id,
-        &file.name,
-        modified_time,
-        tx_sem,
-        file_exists,
+    let bytes = source.read_file(&file.id).await?;
+    let (game, date) = parse::parse_statsbook_with_date(&bytes)
+        .map_err(|e| anyhow::anyhow!("parse error in {}: {e:#}", file.name))?;
+
+    if let Some(ref d) = date {
+        let tomorrow = chrono::Utc::now().date_naive() + chrono::Duration::days(1);
+        if *d > tomorrow {
+            info!(
+                "skipping {}: date {d} is more than 1 day in the future",
+                file.name
+            );
+            return Ok(None);
+        }
+    }
+
+    let fingerprint = match build_fingerprint(&game, date) {
+        Ok(fp) => fp,
+        Err(e) => {
+            warn!("skipping {}: cannot build fingerprint: {e}", file.name);
+            return Ok(None);
+        }
+    };
+    let canonical_id = compute_canonical_id(&fingerprint);
+    let fingerprint_json = serde_json::to_value(&fingerprint)?;
+    let periods = serde_json::to_value(&game.periods)?;
+    let penalties = serde_json::to_value(&game.penalties)?;
+    let home_stats = game
+        .game_summary
+        .as_ref()
+        .map(|s| -> serde_json::Result<_> {
+            Ok((
+                serde_json::to_value(&crate::models::SideStats {
+                    players: s.home_players.clone(),
+                    totals: s.home_totals.clone(),
+                })?,
+                serde_json::to_value(&crate::models::SideStats {
+                    players: s.away_players.clone(),
+                    totals: s.away_totals.clone(),
+                })?,
+            ))
+        })
+        .transpose()?;
+
+    // Check for a canonical duplicate concurrently with other files' prepare tasks
+    // rather than serialized behind transaction WAL flushes.
+    let canonical_duplicate = sqlx::query!(
+        "SELECT id, modified_time FROM games WHERE canonical_id = $1",
+        canonical_id,
     )
+    .fetch_optional(pool)
     .await?;
-    Ok(true)
+
+    let canonical_duplicate_id = if let Some(ref dup) = canonical_duplicate {
+        if dup.modified_time >= modified_time {
+            info!(
+                "duplicate game detected: skipping {} (existing {} has same or newer modified time)",
+                file.id, dup.id
+            );
+            return Ok(None);
+        }
+        info!(
+            "duplicate game detected: replacing {} with {} (newer modified time)",
+            dup.id, file.id
+        );
+        Some(dup.id.clone())
+    } else {
+        None
+    };
+
+    Ok(Some(PreparedInsert {
+        file_id: file.id.clone(),
+        file_name: file.name.clone(),
+        modified_time,
+        source_str: source.source_str(),
+        file_exists,
+        canonical_duplicate_id,
+        date,
+        game,
+        canonical_id,
+        fingerprint_json,
+        periods,
+        penalties,
+        home_stats,
+    }))
+}
+
+async fn commit_file(
+    pool: &PgPool,
+    tx_sem: &tokio::sync::Semaphore,
+    prep: PreparedInsert,
+) -> anyhow::Result<()> {
+    let _tx_permit = tx_sem.acquire().await?;
+    let mut attempt = 0;
+    loop {
+        let mut tx = pool.begin().await?;
+
+        if prep.file_exists {
+            sqlx::query!("DELETE FROM games WHERE id = $1", prep.file_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        if let Some(ref dup_id) = prep.canonical_duplicate_id {
+            sqlx::query!("DELETE FROM games WHERE id = $1", dup_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        sqlx::query!(
+            r#"INSERT INTO games
+               (id, source, date, parser_version, version, tournament, host_league,
+                venue_name, venue_city, venue_state, periods, penalties,
+                modified_time, fingerprint, canonical_id)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"#,
+            prep.file_id,
+            prep.source_str,
+            prep.date,
+            parse::PARSER_VERSION,
+            prep.game.version,
+            prep.game.tournament,
+            prep.game.host_league,
+            prep.game.venue.name,
+            prep.game.venue.city,
+            prep.game.venue.state,
+            &prep.periods,
+            &prep.penalties,
+            prep.modified_time,
+            &prep.fingerprint_json,
+            prep.canonical_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        let mut skater_rows: Vec<(String, String, String, String)> = Vec::new();
+        for (side_key, side) in [("home", &prep.game.home), ("away", &prep.game.away)] {
+            let league_canonical = canonicalize_league(side.league.as_deref().unwrap_or(""));
+            let team_canonical =
+                canonicalize_team(side.league.as_deref(), side.team.as_deref().unwrap_or(""));
+            sqlx::query!(
+                "INSERT INTO game_sides (game_id, side, league, team, color, league_canonical, team_canonical) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                prep.file_id,
+                side_key,
+                side.league,
+                side.team,
+                side.color,
+                league_canonical,
+                team_canonical,
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            for skater in &side.skaters {
+                skater_rows.push((
+                    prep.file_id.clone(),
+                    side_key.to_string(),
+                    skater.number.clone(),
+                    skater.name.clone(),
+                ));
+            }
+        }
+        if !skater_rows.is_empty() {
+            let mut qb =
+                sqlx::QueryBuilder::new("INSERT INTO game_skaters (game_id, side, number, name) ");
+            qb.push_values(skater_rows, |mut b, (game_id, side, number, name)| {
+                b.push_bind(game_id)
+                    .push_bind(side)
+                    .push_bind(number)
+                    .push_bind(name);
+            });
+            qb.build().execute(&mut *tx).await?;
+        }
+
+        if let Some((ref home_stats, ref away_stats)) = prep.home_stats {
+            sqlx::query!(
+                "INSERT INTO game_summary (game_id, side, stats) VALUES ($1, 'home', $2)",
+                prep.file_id,
+                home_stats,
+            )
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query!(
+                "INSERT INTO game_summary (game_id, side, stats) VALUES ($1, 'away', $2)",
+                prep.file_id,
+                away_stats,
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        match tx.commit().await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if is_retryable(&e) && attempt < 5 {
+                    attempt += 1;
+                    let delay = std::time::Duration::from_millis(100 * (1 << attempt));
+                    warn!(
+                        "retryable transaction error for {}, attempt {attempt}/5, waiting {delay:?}: {e}",
+                        prep.file_name
+                    );
+                    tokio::time::sleep(delay).await;
+                    continue;
+                }
+                return Err(e.into());
+            }
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -262,10 +505,11 @@ fn build_fingerprint(game: &GameData, date: Option<NaiveDate>) -> anyhow::Result
     })
 }
 
+// Used by reingest_stale: always re-downloads and re-parses regardless of what's in the DB.
 async fn insert_parsed_file(
     pool: &PgPool,
     source: &FileSource,
-    file_id: &str, // used as both the download key and games.id PK
+    file_id: &str,
     file_name: &str,
     modified_time: DateTime<Utc>,
     tx_sem: &tokio::sync::Semaphore,
@@ -278,7 +522,7 @@ async fn insert_parsed_file(
     if let Some(ref d) = date {
         let tomorrow = chrono::Utc::now().date_naive() + chrono::Duration::days(1);
         if *d > tomorrow {
-            tracing::info!("skipping {file_name}: date {d} is more than 1 day in the future");
+            info!("skipping {file_name}: date {d} is more than 1 day in the future");
             return Ok(());
         }
     }
@@ -292,7 +536,6 @@ async fn insert_parsed_file(
     };
     let canonical_id = compute_canonical_id(&fingerprint);
     let fingerprint_json = serde_json::to_value(&fingerprint)?;
-
     let periods = serde_json::to_value(&game.periods)?;
     let penalties = serde_json::to_value(&game.penalties)?;
     let home_stats = game
@@ -312,17 +555,14 @@ async fn insert_parsed_file(
         })
         .transpose()?;
 
-    // Check for a canonical duplicate before acquiring the semaphore so this
-    // read runs concurrently with other files' parsing/checks rather than
-    // serialized behind ongoing transaction WAL flushes.
     let canonical_duplicate = sqlx::query!(
-        r#"SELECT id, modified_time FROM games WHERE canonical_id = $1"#,
+        "SELECT id, modified_time FROM games WHERE canonical_id = $1",
         canonical_id,
     )
     .fetch_optional(pool)
     .await?;
 
-    if let Some(ref dup) = canonical_duplicate {
+    let canonical_duplicate_id = if let Some(ref dup) = canonical_duplicate {
         if dup.modified_time >= modified_time {
             info!(
                 "duplicate game detected: skipping {} (existing {} has same or newer modified time)",
@@ -334,124 +574,31 @@ async fn insert_parsed_file(
             "duplicate game detected: replacing {} with {} (newer modified time)",
             dup.id, file_id
         );
-    }
+        Some(dup.id.clone())
+    } else {
+        None
+    };
 
-    let _tx_permit = tx_sem.acquire().await?;
-    let mut attempt = 0;
-    loop {
-        let mut tx = pool.begin().await?;
-
-        // Remove the existing row before re-inserting (skipped for new files).
-        if file_exists {
-            sqlx::query!("DELETE FROM games WHERE id = $1", file_id)
-                .execute(&mut *tx)
-                .await?;
-        }
-
-        // Delete canonical duplicate identified above (different file, same game content).
-        if let Some(ref dup) = canonical_duplicate {
-            sqlx::query!("DELETE FROM games WHERE id = $1", dup.id)
-                .execute(&mut *tx)
-                .await?;
-        }
-
-        sqlx::query!(
-            r#"INSERT INTO games
-               (id, source, date, parser_version, version, tournament, host_league,
-                venue_name, venue_city, venue_state, periods, penalties,
-                modified_time, fingerprint, canonical_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"#,
-            file_id,
-            source.source_str(),
-            date,
-            parse::PARSER_VERSION,
-            game.version,
-            game.tournament,
-            game.host_league,
-            game.venue.name,
-            game.venue.city,
-            game.venue.state,
-            &periods,
-            &penalties,
+    commit_file(
+        pool,
+        tx_sem,
+        PreparedInsert {
+            file_id: file_id.to_string(),
+            file_name: file_name.to_string(),
             modified_time,
-            &fingerprint_json,
+            source_str: source.source_str(),
+            file_exists,
+            canonical_duplicate_id,
+            date,
+            game,
             canonical_id,
-        )
-        .execute(&mut *tx)
-        .await?;
-
-        let mut skater_rows: Vec<(String, String, String, String)> = Vec::new();
-        for (side_key, side) in [("home", &game.home), ("away", &game.away)] {
-            let league_canonical = canonicalize_league(side.league.as_deref().unwrap_or(""));
-            let team_canonical =
-                canonicalize_team(side.league.as_deref(), side.team.as_deref().unwrap_or(""));
-            sqlx::query!(
-                "INSERT INTO game_sides (game_id, side, league, team, color, league_canonical, team_canonical) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-                file_id,
-                side_key,
-                side.league,
-                side.team,
-                side.color,
-                league_canonical,
-                team_canonical,
-            )
-            .execute(&mut *tx)
-            .await?;
-
-            for skater in &side.skaters {
-                skater_rows.push((
-                    file_id.to_string(),
-                    side_key.to_string(),
-                    skater.number.clone(),
-                    skater.name.clone(),
-                ));
-            }
-        }
-        if !skater_rows.is_empty() {
-            let mut qb =
-                sqlx::QueryBuilder::new("INSERT INTO game_skaters (game_id, side, number, name) ");
-            qb.push_values(skater_rows, |mut b, (game_id, side, number, name)| {
-                b.push_bind(game_id)
-                    .push_bind(side)
-                    .push_bind(number)
-                    .push_bind(name);
-            });
-            qb.build().execute(&mut *tx).await?;
-        }
-
-        if let Some((ref home_stats, ref away_stats)) = home_stats {
-            sqlx::query!(
-                "INSERT INTO game_summary (game_id, side, stats) VALUES ($1, 'home', $2)",
-                file_id,
-                home_stats,
-            )
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query!(
-                "INSERT INTO game_summary (game_id, side, stats) VALUES ($1, 'away', $2)",
-                file_id,
-                away_stats,
-            )
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        match tx.commit().await {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                if is_retryable(&e) && attempt < 5 {
-                    attempt += 1;
-                    let delay = std::time::Duration::from_millis(100 * (1 << attempt));
-                    warn!(
-                        "retryable transaction error for {file_name}, attempt {attempt}/5, waiting {delay:?}: {e}"
-                    );
-                    tokio::time::sleep(delay).await;
-                    continue;
-                }
-                return Err(e.into());
-            }
-        }
-    }
+            fingerprint_json,
+            periods,
+            penalties,
+            home_stats,
+        },
+    )
+    .await
 }
 
 fn is_retryable(e: &sqlx::Error) -> bool {
