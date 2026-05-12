@@ -40,7 +40,7 @@ const FIXTURES: &[Fixture] = &[
         jam_counts: &[24, 20],
         star_pass_counts: &[4, 3],
         penalties: 52,
-        summary_players: (16, 15),
+        summary_players: (15, 14),
     },
 ];
 

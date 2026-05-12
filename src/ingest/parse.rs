@@ -541,7 +541,7 @@ fn parse_summary_player(
         total_vtar_avg_plus_minus: cell_opt_f32(sheet, row, 36),
         penalty_count: cell_opt_u8(sheet, row, 37),
     };
-    if summary.jams_total.unwrap_or_default() == 0 {
+    if summary.jams_total == Some(0) {
         return None;
     }
     Some(summary)

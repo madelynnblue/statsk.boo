@@ -48,53 +48,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_config_defaults() {
+    fn test_config_from_env() {
         unsafe {
+            // defaults: only GOOGLE_API_KEY set
             std::env::set_var("DATABASE_URL", "postgresql://test");
             std::env::set_var("GOOGLE_API_KEY", "key123");
             std::env::remove_var("INGEST_DIR");
             std::env::remove_var("BIND_ADDR");
             std::env::remove_var("INGEST_INTERVAL");
             std::env::remove_var("INGEST_JITTER");
-        }
+            let cfg = Config::from_env().unwrap();
+            assert_eq!(cfg.bind_addr, "0.0.0.0:8080");
+            assert_eq!(cfg.ingest_interval.as_secs(), 86400); // 24h
+            assert_eq!(cfg.ingest_jitter.as_secs(), 3600); // 1h
+            assert_eq!(cfg.ingest_dir, None);
+            assert_eq!(cfg.google_api_key.as_deref(), Some("key123"));
 
-        let cfg = Config::from_env().unwrap();
-        assert_eq!(cfg.bind_addr, "0.0.0.0:8080");
-        assert_eq!(cfg.ingest_interval.as_secs(), 86400); // 24h
-        assert_eq!(cfg.ingest_jitter.as_secs(), 3600); // 1h
-        assert_eq!(cfg.ingest_dir, None);
-        assert_eq!(cfg.google_api_key.as_deref(), Some("key123"));
-    }
-
-    #[test]
-    fn test_ingest_dir_set() {
-        unsafe {
-            std::env::set_var("DATABASE_URL", "postgresql://test");
+            // INGEST_DIR set, no API key
             std::env::set_var("INGEST_DIR", "/tmp/xlsx");
             std::env::remove_var("GOOGLE_API_KEY");
-        }
-        let cfg = Config::from_env().unwrap();
-        assert_eq!(cfg.ingest_dir.as_deref(), Some("/tmp/xlsx"));
-        assert_eq!(cfg.google_api_key, None);
-    }
+            let cfg = Config::from_env().unwrap();
+            assert_eq!(cfg.ingest_dir.as_deref(), Some("/tmp/xlsx"));
+            assert_eq!(cfg.google_api_key, None);
 
-    #[test]
-    fn test_neither_set_errors() {
-        unsafe {
-            std::env::set_var("DATABASE_URL", "postgresql://test");
+            // neither set → error
             std::env::remove_var("INGEST_DIR");
             std::env::remove_var("GOOGLE_API_KEY");
-        }
-        assert!(Config::from_env().is_err());
-    }
+            assert!(Config::from_env().is_err());
 
-    #[test]
-    fn test_both_set_errors() {
-        unsafe {
-            std::env::set_var("DATABASE_URL", "postgresql://test");
+            // both set → error
             std::env::set_var("INGEST_DIR", "/tmp/xlsx");
             std::env::set_var("GOOGLE_API_KEY", "key123");
+            assert!(Config::from_env().is_err());
         }
-        assert!(Config::from_env().is_err());
     }
 }
