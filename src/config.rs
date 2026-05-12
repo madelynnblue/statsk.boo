@@ -23,7 +23,11 @@ impl Config {
 
         Ok(Self {
             database_url: std::env::var("DATABASE_URL").context("DATABASE_URL not set")?,
-            bind_addr: std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".into()),
+            bind_addr: std::env::var("BIND_ADDR").unwrap_or_else(|_| {
+                std::env::var("PORT")
+                    .map(|p| format!("0.0.0.0:{p}"))
+                    .unwrap_or_else(|_| "0.0.0.0:8080".into())
+            }),
             ingest_interval: parse_duration("INGEST_INTERVAL", "24h")?,
             ingest_jitter: parse_duration("INGEST_JITTER", "1h")?,
             ingest_dir,
