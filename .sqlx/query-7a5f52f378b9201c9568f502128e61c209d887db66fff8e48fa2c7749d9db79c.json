@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT MAX(ingested_at) as ts FROM games",
+  "query": "SELECT MAX(modified_time) as ts FROM games",
   "describe": {
     "columns": [
       {
@@ -16,5 +16,5 @@
       null
     ]
   },
-  "hash": "ba89823ed957c8ea5479c02e7c402289bfdc77c771f44b3084e7bea60e6fec97"
+  "hash": "7a5f52f378b9201c9568f502128e61c209d887db66fff8e48fa2c7749d9db79c"
 }

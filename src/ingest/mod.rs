@@ -13,7 +13,6 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::{error, info, warn};
 
 struct LocalSource {
@@ -104,7 +103,9 @@ pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
 
     // One transaction at a time: the fingerprint GIN scan reads the whole table snapshot,
     // which concurrent writes invalidate, causing RETRY_SERIALIZABLE on commit.
-    // Downloads and parsing happen in parallel; only the DB transaction is serialized.
+    // `reingest_stale` runs its workers in parallel, so the semaphore serializes the
+    // DB transaction step across them. `run_ingest` itself is sequential (oldest-first)
+    // so the DB cursor `MAX(modified_time)` advances monotonically across restarts.
     let tx_sem = Arc::new(tokio::sync::Semaphore::new(1));
 
     match reingest_stale(pool.clone(), source.clone(), tx_sem.clone()).await {
@@ -127,70 +128,49 @@ async fn run_ingest(
     source: Arc<FileSource>,
     tx_sem: Arc<tokio::sync::Semaphore>,
 ) -> anyhow::Result<()> {
-    let last_ingest = last_ingest_at(&pool)
-        .await?
-        .unwrap_or(
-            chrono::NaiveDate::from_ymd_opt(2023, 1, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc(),
-        );
+    let last_ingest = last_ingest_at(&pool).await?.unwrap_or(
+        chrono::NaiveDate::from_ymd_opt(2023, 1, 1)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc(),
+    );
 
     let jitter = chrono::Duration::from_std(cfg.ingest_jitter).unwrap_or_default();
     let since = (last_ingest - jitter).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     info!("ingesting files since {since}");
-    let files = source
+    let mut files = source
         .list_xlsx_since(&cfg.google_drive_folder_id, &since)
         .await?;
+
+    // Sort oldest-first by Drive modifiedTime so the DB cursor (MAX(modified_time))
+    // advances monotonically; if ingestion is interrupted, the next run picks up
+    // exactly where it left off rather than missing files with old modifiedTimes.
+    files.sort_unstable_by(|a, b| a.modified_time.cmp(&b.modified_time));
 
     let n = files.len();
     info!("found {n} candidate file(s)");
 
-    let cores = std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(4);
-    let process_sem = Arc::new(tokio::sync::Semaphore::new(cores));
-    let mut set = tokio::task::JoinSet::new();
-    let counter = Arc::new(AtomicUsize::new(0));
-
-    for file in files {
-        let permit = process_sem.clone().acquire_owned().await?;
-        let pool = pool.clone();
-        let source = source.clone();
-        let tx_sem = tx_sem.clone();
-        let counter = counter.clone();
-        set.spawn(async move {
-            let _permit = permit;
-            let name = file.name.clone();
-            let result = process_file(&pool, &source, &file, &tx_sem).await;
-            let current = counter.fetch_add(1, Ordering::Relaxed) + 1;
-            match result {
-                Ok(true) => {
-                    info!("ingested ({current}/{n}) {name}");
-                    1
-                }
-                Ok(false) => 0,
-                Err(e) => {
-                    warn!("skipping {name}: {e:#}");
-                    0
-                }
+    let mut ingested = 0;
+    for (i, file) in files.iter().enumerate() {
+        let name = &file.name;
+        match process_file(&pool, &source, file, &tx_sem).await {
+            Ok(true) => {
+                info!("ingested ({}/{n}) {name}", i + 1);
+                ingested += 1;
             }
-        });
+            Ok(false) => {}
+            Err(e) => warn!("skipping {name}: {e:#}"),
+        }
     }
-
-    let mut skipped = 0;
-    while let Some(result) = set.join_next().await {
-        skipped += result?;
-    }
-    if skipped > 0 {
-        info!("skipped {skipped} (already present)");
+    if ingested > 0 {
+        info!("ingested {ingested} new game(s)");
     }
     Ok(())
 }
 
 async fn last_ingest_at(pool: &PgPool) -> anyhow::Result<Option<chrono::DateTime<chrono::Utc>>> {
-    let row = sqlx::query!("SELECT MAX(ingested_at) as ts FROM games")
+    let row = sqlx::query!("SELECT MAX(modified_time) as ts FROM games")
         .fetch_one(pool)
         .await?;
     Ok(row.ts)

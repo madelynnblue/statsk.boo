@@ -132,11 +132,7 @@ impl DriveClient {
         Ok(all_files)
     }
 
-    async fn send_list_request(
-        &self,
-        q: &str,
-        page_token: &Option<String>,
-    ) -> Result<FileList> {
+    async fn send_list_request(&self, q: &str, page_token: &Option<String>) -> Result<FileList> {
         let api_key = &self.api_key;
         with_retry(|| async {
             let mut req = self
@@ -151,13 +147,16 @@ impl DriveClient {
             if let Some(token) = page_token {
                 req = req.query(&[("pageToken", token.as_str())]);
             }
-            req.send().await
+            req.send()
+                .await
                 .map_err(|e| format!("network error: {e}"))?
                 .error_for_status()
                 .map_err(|e| format!("HTTP error: {e}"))?
-                .json::<FileList>().await
+                .json::<FileList>()
+                .await
                 .map_err(|e| format!("parse error: {e}"))
-        }).await
+        })
+        .await
     }
 
     pub async fn download_file(&self, file_id: &str) -> Result<Vec<u8>> {
@@ -166,16 +165,22 @@ impl DriveClient {
         with_retry(|| async {
             let resp = self
                 .client
-                .get(format!("https://www.googleapis.com/drive/v3/files/{file_id}"))
+                .get(format!(
+                    "https://www.googleapis.com/drive/v3/files/{file_id}"
+                ))
                 .query(&[("alt", "media"), ("key", api_key)])
-                .send().await
+                .send()
+                .await
                 .map_err(|e| format!("network error: {e}"))?
                 .error_for_status()
                 .map_err(|e| format!("HTTP error: {e}"))?;
-            let bytes = resp.bytes().await
+            let bytes = resp
+                .bytes()
+                .await
                 .map_err(|e| format!("body read error: {e}"))?;
             Ok::<Vec<u8>, String>(bytes.to_vec())
-        }).await
+        })
+        .await
     }
 }
 

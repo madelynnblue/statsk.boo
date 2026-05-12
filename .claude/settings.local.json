@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gcloud logging read *)",
+      "Bash(gcloud config list *)",
+      "Bash(gcloud projects list *)",
+      "Bash(docker run *)"
+    ]
+  }
+}
