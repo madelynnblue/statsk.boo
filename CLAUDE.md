@@ -37,16 +37,18 @@ WSB (WFTDA Statsbook Browser) downloads WFTDA statsbook `.xlsx` files from a pub
 - Team = `(league, team)` pair
 - Game = unique `id` text PK (Drive file ID for `source='drive'`, relative path for `source='file'`)
 
-**Database:** Relational schema with five tables:
-- `games` (`id TEXT PK`, `source TEXT` (`'drive'`|`'file'`), `date`, `ingested_at`, `parser_version`, `version`, `tournament`, `host_league`, `venue_*`, `periods JSONB`, `penalties JSONB`)
-- `game_sides` (`game_id FK`, `side`, `league`, `team`, `color`)
+**Database:** Relational schema with four tables and GIN indexes for full-text search:
+- `games` (`id TEXT PK`, `source TEXT` (`'drive'`|`'file'`), `date`, `ingested_at`, `parser_version`, `version`, `tournament`, `host_league`, `venue_*`, `periods JSONB`, `penalties JSONB`, `modified_time`, `fingerprint JSONB`, `canonical_id TEXT`)
+- `game_sides` (`game_id FK`, `side`, `league`, `team`, `color`, `league_canonical`, `team_canonical`)
 - `game_skaters` (`game_id FK`, `side`, `number`, `name`)
 - `game_summary` (`game_id FK`, `side`, `stats JSONB`)
-- `game_*_search` materialized views for full-text search
+- Search uses GIN trigram indexes (`pg_trgm`) on name/league/team/tournament/venue columns — no materialized views
 
 **SQL queries:** All use compile-time `sqlx::query!` macros, which validate SQL against the live database schema at build time. A running CockroachDB instance with the `wsb` schema applied is required to compile.
 
 **Migrations:** `sqlx::migrate!("./migrations").set_locking(false)` — locking is disabled because CockroachDB doesn't support PostgreSQL advisory locks.
+
+**Deduplication:** Each game gets a `canonical_id` — a SHA-256 hash (first 4 bytes, hex) of `(date, home_league_canonical, home_team_canonical, away_league_canonical, away_team_canonical, home_score, away_score)`. This deduplicates across Drive re-uploads and local files representing the same game. If two files share a `canonical_id`, only the one with the newer `modified_time` is kept.
 
 **Parsing:** `ingest/parse.rs` uses calamine to read `.xlsx` files. Cell values are read by address (e.g., `(0, 0)` for A1). The calamine API uses `Data` enum (not `DataType` — that's a trait). Calamine reads **cached** cell values only — it does NOT evaluate Excel formulas. `worksheet_formula()` returns `Range<String>` with raw formula text.
 
