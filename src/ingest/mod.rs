@@ -161,7 +161,7 @@ async fn run_ingest(
             let current = counter.fetch_add(1, Ordering::Relaxed) + 1;
             match result {
                 Ok(true) => {
-                    info!("ingested ({current}/{n}) {name} ");
+                    info!("ingested ({current}/{n}) {name}");
                     1
                 }
                 Ok(false) => 0,
@@ -394,6 +394,7 @@ async fn insert_parsed_file(
         .execute(&mut *tx)
         .await?;
 
+        let mut skater_rows: Vec<(String, String, String, String)> = Vec::new();
         for (side_key, side) in [("home", &game.home), ("away", &game.away)] {
             let league_canonical = canonicalize_league(side.league.as_deref().unwrap_or(""));
             let team_canonical =
@@ -412,16 +413,24 @@ async fn insert_parsed_file(
             .await?;
 
             for skater in &side.skaters {
-                sqlx::query!(
-                    "INSERT INTO game_skaters (game_id, side, number, name) VALUES ($1, $2, $3, $4)",
-                    file_id,
-                    side_key,
-                    skater.number,
-                    skater.name,
-                )
-                .execute(&mut *tx)
-                .await?;
+                skater_rows.push((
+                    file_id.to_string(),
+                    side_key.to_string(),
+                    skater.number.clone(),
+                    skater.name.clone(),
+                ));
             }
+        }
+        if !skater_rows.is_empty() {
+            let mut qb =
+                sqlx::QueryBuilder::new("INSERT INTO game_skaters (game_id, side, number, name) ");
+            qb.push_values(skater_rows, |mut b, (game_id, side, number, name)| {
+                b.push_bind(game_id)
+                    .push_bind(side)
+                    .push_bind(number)
+                    .push_bind(name);
+            });
+            qb.build().execute(&mut *tx).await?;
         }
 
         if let Some((ref home_stats, ref away_stats)) = home_stats {
