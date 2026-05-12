@@ -8,18 +8,20 @@ use serde::Serialize;
 
 pub async fn handle(
     State(state): State<AppState>,
-    Path(game_id): Path<String>,
+    Path(canonical_id): Path<String>,
 ) -> Result<Html<String>, AppError> {
     let row = sqlx::query!(
-        r#"SELECT date, source, version, tournament, host_league,
+        r#"SELECT id, date, source, version, tournament, host_league,
                   venue_name, venue_city, venue_state,
                   periods, penalties
-           FROM games WHERE id = $1"#,
-        game_id,
+           FROM games WHERE canonical_id = $1"#,
+        canonical_id,
     )
     .fetch_optional(&*state.pool)
     .await?
     .ok_or(AppError::NotFound)?;
+
+    let game_id = &row.id;
 
     let side_rows = sqlx::query!(
         r#"SELECT side as "side!: String", league, team, color
@@ -136,7 +138,7 @@ pub async fn handle(
         away_names,
         home_penalties,
         away_penalties,
-        game_id => game_id,
+        game_id => canonical_id,
         source => row.source,
     })?;
     Ok(Html(html))

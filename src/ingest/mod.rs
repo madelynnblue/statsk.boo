@@ -9,6 +9,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use drive::DriveClient;
 use drive::DriveFile;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -216,6 +217,19 @@ struct GameFingerprint {
     away_score: i16,
 }
 
+fn compute_canonical_id(fp: &GameFingerprint) -> String {
+    let home_league = canonicalize_league(&fp.home_league);
+    let home_team = canonicalize_team(Some(&fp.home_league), &fp.home_team);
+    let away_league = canonicalize_league(&fp.away_league);
+    let away_team = canonicalize_team(Some(&fp.away_league), &fp.away_team);
+    let input = format!(
+        "{}\n{}\n{}\n{}\n{}\n{}\n{}",
+        fp.date, home_league, home_team, away_league, away_team, fp.home_score, fp.away_score
+    );
+    let hash = Sha256::digest(input.as_bytes());
+    hex::encode(&hash[..4])
+}
+
 fn build_fingerprint(game: &GameData, date: Option<NaiveDate>) -> anyhow::Result<GameFingerprint> {
     Ok(GameFingerprint {
         date: date.ok_or_else(|| anyhow::anyhow!("missing date"))?,
@@ -271,6 +285,7 @@ async fn insert_parsed_file(
             return Ok(());
         }
     };
+    let canonical_id = compute_canonical_id(&fingerprint);
     let fingerprint_json = serde_json::to_value(&fingerprint)?;
 
     let periods = serde_json::to_value(&game.periods)?;
@@ -333,8 +348,8 @@ async fn insert_parsed_file(
             r#"INSERT INTO games
                (id, source, date, parser_version, version, tournament, host_league,
                 venue_name, venue_city, venue_state, periods, penalties,
-                modified_time, fingerprint)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"#,
+                modified_time, fingerprint, canonical_id)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"#,
             file_id,
             source.source_str(),
             date,
@@ -349,6 +364,7 @@ async fn insert_parsed_file(
             &penalties,
             modified_time,
             &fingerprint_json,
+            canonical_id,
         )
         .execute(&mut *tx)
         .await?;

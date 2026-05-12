@@ -127,7 +127,7 @@ pub async fn handle(
 
         let game_rows = sqlx::query!(
             r#"SELECT DISTINCT ON (g.date, g.id)
-                      g.id, g.date, g.periods,
+                      g.id, g.canonical_id, g.date, g.periods,
                       home.team as home_team, home.league as home_league,
                       away.team as away_team, away.league as away_league,
                       g.tournament, g.venue_name
@@ -149,7 +149,7 @@ pub async fn handle(
             let periods: Vec<Period> =
                 serde_json::from_value(r.periods).map_err(anyhow::Error::from)?;
             games.push(GameResult {
-                game_id: r.id,
+                game_id: r.canonical_id.unwrap_or_default(),
                 date: r.date,
                 home_team: r.home_team.unwrap_or_default(),
                 home_league: r.home_league.unwrap_or_default(),

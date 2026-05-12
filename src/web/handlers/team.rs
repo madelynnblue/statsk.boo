@@ -38,7 +38,7 @@ pub async fn handle(
     let team_canonical = canonicalize_team(Some(&params.league), &params.team);
 
     let row = sqlx::query!(
-        r#"SELECT g.id, g.date, g.periods,
+        r#"SELECT g.id, g.canonical_id, g.date, g.periods,
                   team_side.side as "side!: String",
                   team_side.league, team_side.team,
                   opp.league as opp_league, opp.team as opp_team
@@ -94,7 +94,7 @@ pub async fn handle(
         };
 
         game_rows.push(GameRow {
-            game_id: row.id.clone(),
+            game_id: row.canonical_id.clone().unwrap_or_default(),
             date: row.date.to_string(),
             side: side.clone(),
             our_score,

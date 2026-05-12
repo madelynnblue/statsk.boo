@@ -55,7 +55,7 @@ pub async fn handle(
     let league_canonical = canonicalize_league(&params.league);
 
     let rows = sqlx::query!(
-        r#"SELECT g.id, g.date, g.periods,
+        r#"SELECT g.id, g.canonical_id, g.date, g.periods,
                   gs.side as "side!: String",
                   player_side.league, player_side.team,
                   opp.league as opp_league, opp.team as opp_team
@@ -155,7 +155,7 @@ pub async fn handle(
         }
 
         game_rows.push(GameRow {
-            game_id: row.id.clone(),
+            game_id: row.canonical_id.clone().unwrap_or_default(),
             date: row.date.to_string(),
             opponent_team,
             opponent_league,
@@ -197,7 +197,7 @@ pub async fn handle(
                 // normalization may differ between the IGRF roster and summary sheet.
                 if let Some(stats) = players.iter().find(|p| p.number == params.number) {
                     game_summary_rows.push(GameSummaryEntry {
-                        game_id: row.id.clone(),
+                        game_id: row.canonical_id.clone().unwrap_or_default(),
                         date: game_row.date.clone(),
                         opponent_team: game_row.opponent_team.clone(),
                         opponent_league: game_row.opponent_league.clone(),
