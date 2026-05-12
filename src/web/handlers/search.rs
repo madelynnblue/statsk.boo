@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::canon::{best_name, canonicalize_league, canonicalize_team};
 use crate::models::{Period, periods_score};
@@ -60,19 +60,29 @@ pub async fn handle(
         .fetch_all(&*state.pool)
         .await?;
 
-        let mut seen = HashSet::new();
-        let mut players: Vec<PlayerResult> = Vec::new();
+        let mut player_groups: HashMap<(String, String, String), Vec<(String, String)>> =
+            HashMap::new();
         for r in &player_rows {
             let lc = canonicalize_league(r.league.as_deref().unwrap_or(""));
-            let key = (lc, r.name.clone(), r.number.clone());
-            if seen.insert(key) {
-                players.push(PlayerResult {
-                    league: r.league.clone().unwrap_or_default(),
-                    name: r.name.clone(),
-                    number: r.number.clone(),
-                });
-            }
+            let nc = r.name.to_lowercase();
+            player_groups
+                .entry((lc, nc, r.number.clone()))
+                .or_default()
+                .push((r.league.clone().unwrap_or_default(), r.name.clone()));
         }
+        let mut players: Vec<PlayerResult> = player_groups
+            .into_iter()
+            .filter_map(|((_, _, number), variants)| {
+                let league = best_name(variants.iter().map(|(l, _)| l.as_str()))?;
+                let name = best_name(variants.iter().map(|(_, n)| n.as_str()))?;
+                Some(PlayerResult {
+                    league,
+                    name,
+                    number,
+                })
+            })
+            .collect();
+        players.sort_by(|a, b| a.league.cmp(&b.league).then(a.name.cmp(&b.name)));
 
         let team_rows = sqlx::query!(
             r#"SELECT league, team FROM game_sides
