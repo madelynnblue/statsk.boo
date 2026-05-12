@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::{error, info, warn};
 
 struct LocalSource {
@@ -145,19 +146,22 @@ async fn run_ingest(
         .unwrap_or(4);
     let process_sem = Arc::new(tokio::sync::Semaphore::new(cores));
     let mut set = tokio::task::JoinSet::new();
+    let counter = Arc::new(AtomicUsize::new(0));
 
     for file in files {
         let permit = process_sem.clone().acquire_owned().await?;
         let pool = pool.clone();
         let source = source.clone();
         let tx_sem = tx_sem.clone();
+        let counter = counter.clone();
         set.spawn(async move {
             let _permit = permit;
             let name = file.name.clone();
             let result = process_file(&pool, &source, &file, &tx_sem).await;
+            let current = counter.fetch_add(1, Ordering::Relaxed) + 1;
             match result {
                 Ok(true) => {
-                    info!("ingested {name}");
+                    info!("ingested ({current}/{n}) {name} ");
                     1
                 }
                 Ok(false) => 0,

@@ -88,10 +88,10 @@ pub async fn handle(
         for r in &team_rows {
             let lc = canonicalize_league(r.league.as_deref().unwrap_or(""));
             let tc = canonicalize_team(r.league.as_deref(), r.team.as_deref().unwrap_or(""));
-            team_groups
-                .entry((lc, tc))
-                .or_default()
-                .push((r.league.clone().unwrap_or_default(), r.team.clone().unwrap_or_default()));
+            team_groups.entry((lc, tc)).or_default().push((
+                r.league.clone().unwrap_or_default(),
+                r.team.clone().unwrap_or_default(),
+            ));
         }
         let mut teams: Vec<TeamResult> = team_groups
             .into_values()

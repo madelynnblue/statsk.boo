@@ -1,9 +1,9 @@
 use crate::canon::{best_name, canonicalize_league};
-use std::collections::HashMap;
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
 use axum::response::Html;
 use serde::Deserialize;
+use std::collections::HashMap;
 
 #[derive(Deserialize)]
 pub struct LeagueParams {

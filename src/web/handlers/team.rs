@@ -53,7 +53,8 @@ pub async fn handle(
     .fetch_all(&*state.pool)
     .await?;
 
-    let display_league = row.first()
+    let display_league = row
+        .first()
         .and_then(|r| r.league.clone())
         .unwrap_or_else(|| params.league.clone());
     let display_team = best_name(row.iter().filter_map(|r| r.team.as_deref()))
