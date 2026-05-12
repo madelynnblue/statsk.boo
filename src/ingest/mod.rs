@@ -129,7 +129,13 @@ async fn run_ingest(
 ) -> anyhow::Result<()> {
     let last_ingest = last_ingest_at(&pool)
         .await?
-        .unwrap_or(chrono::DateTime::UNIX_EPOCH);
+        .unwrap_or(
+            chrono::NaiveDate::from_ymd_opt(2023, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc(),
+        );
 
     let jitter = chrono::Duration::from_std(cfg.ingest_jitter).unwrap_or_default();
     let since = (last_ingest - jitter).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
