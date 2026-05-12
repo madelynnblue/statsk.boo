@@ -154,24 +154,28 @@ async fn run_ingest(
         set.spawn(async move {
             let _permit = permit;
             let name = file.name.clone();
-            let res = process_file(&pool, &source, &file, &tx_sem).await;
-            (name, res)
+            let result = process_file(&pool, &source, &file, &tx_sem).await;
+            match result {
+                Ok(true) => {
+                    info!("ingested {name}");
+                    1
+                }
+                Ok(false) => 0,
+                Err(e) => {
+                    warn!("skipping {name}: {e:#}");
+                    0
+                }
+            }
         });
     }
 
     let mut skipped = 0;
     while let Some(result) = set.join_next().await {
-        let (name, result) = result?;
-        match result {
-            Ok(true) => info!("ingested {name}"),
-            Ok(false) => skipped += 1,
-            Err(e) => warn!("skipping {name}: {e:#}"),
-        }
+        skipped += result?;
     }
     if skipped > 0 {
         info!("skipped {skipped} (already present)");
     }
-
     Ok(())
 }
 
@@ -196,13 +200,23 @@ async fn process_file(
     let existing = sqlx::query!("SELECT modified_time FROM games WHERE id = $1", file.id,)
         .fetch_optional(pool)
         .await?;
+    let file_exists = existing.is_some();
     if let Some(existing) = existing
         && existing.modified_time >= modified_time
     {
         return Ok(false);
     }
 
-    insert_parsed_file(pool, source, &file.id, &file.name, modified_time, tx_sem).await?;
+    insert_parsed_file(
+        pool,
+        source,
+        &file.id,
+        &file.name,
+        modified_time,
+        tx_sem,
+        file_exists,
+    )
+    .await?;
     Ok(true)
 }
 
@@ -265,6 +279,7 @@ async fn insert_parsed_file(
     file_name: &str,
     modified_time: DateTime<Utc>,
     tx_sem: &tokio::sync::Semaphore,
+    file_exists: bool,
 ) -> anyhow::Result<()> {
     let bytes = source.read_file(file_id).await?;
     let (game, date) = parse::parse_statsbook_with_date(&bytes)
@@ -307,39 +322,45 @@ async fn insert_parsed_file(
         })
         .transpose()?;
 
+    // Check for a canonical duplicate before acquiring the semaphore so this
+    // read runs concurrently with other files' parsing/checks rather than
+    // serialized behind ongoing transaction WAL flushes.
+    let canonical_duplicate = sqlx::query!(
+        r#"SELECT id, modified_time FROM games WHERE canonical_id = $1"#,
+        canonical_id,
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some(ref dup) = canonical_duplicate {
+        if dup.modified_time >= modified_time {
+            info!(
+                "duplicate game detected: skipping {} (existing {} has same or newer modified time)",
+                file_id, dup.id
+            );
+            return Ok(());
+        }
+        info!(
+            "duplicate game detected: replacing {} with {} (newer modified time)",
+            dup.id, file_id
+        );
+    }
+
     let _tx_permit = tx_sem.acquire().await?;
     let mut attempt = 0;
     loop {
         let mut tx = pool.begin().await?;
 
-        // Remove the row we are about to replace (noop for new files; clears old data for re-ingest).
-        sqlx::query!("DELETE FROM games WHERE id = $1", file_id)
-            .execute(&mut *tx)
-            .await?;
+        // Remove the existing row before re-inserting (skipped for new files).
+        if file_exists {
+            sqlx::query!("DELETE FROM games WHERE id = $1", file_id)
+                .execute(&mut *tx)
+                .await?;
+        }
 
-        // Check for a duplicate by fingerprint. The self-delete above ensures we never match
-        // the row we just removed, so this can only find a genuinely different file.
-        let existing = sqlx::query!(
-            r#"SELECT id, modified_time FROM games WHERE fingerprint = $1 ORDER BY modified_time DESC LIMIT 1"#,
-            &fingerprint_json,
-        )
-        .fetch_optional(&mut *tx)
-        .await?;
-
-        if let Some(ref existing) = existing {
-            if existing.modified_time >= modified_time {
-                info!(
-                    "duplicate game detected: skipping {} (existing {} has same or newer modified time)",
-                    file_id, existing.id
-                );
-                tx.rollback().await?;
-                return Ok(());
-            }
-            info!(
-                "duplicate game detected: replacing {} with {} (newer modified time)",
-                existing.id, file_id
-            );
-            sqlx::query!("DELETE FROM games WHERE id = $1", existing.id)
+        // Delete canonical duplicate identified above (different file, same game content).
+        if let Some(ref dup) = canonical_duplicate {
+            sqlx::query!("DELETE FROM games WHERE id = $1", dup.id)
                 .execute(&mut *tx)
                 .await?;
         }
@@ -494,8 +515,16 @@ async fn reingest_stale(
         set.spawn(async move {
             let _permit = permit;
             info!("re-ingesting {}/{}: {}", i + 1, total, row.id);
-            match insert_parsed_file(&pool, &source, &row.id, &row.id, row.modified_time, &tx_sem)
-                .await
+            match insert_parsed_file(
+                &pool,
+                &source,
+                &row.id,
+                &row.id,
+                row.modified_time,
+                &tx_sem,
+                true,
+            )
+            .await
             {
                 Ok(()) => 1,
                 Err(e) => {

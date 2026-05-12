@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS games (
     canonical_id   TEXT NOT NULL
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS games_canonical_id_idx ON games (canonical_id) WHERE canonical_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS games_canonical_id_idx ON games (canonical_id) STORING (modified_time);
 
 CREATE TABLE IF NOT EXISTS game_sides (
     game_id        TEXT NOT NULL REFERENCES games ON DELETE CASCADE,
@@ -33,8 +33,8 @@ CREATE TABLE IF NOT EXISTS game_sides (
 );
 
 -- Exact team/league canonical lookup + search dedup
-CREATE INDEX IF NOT EXISTS game_sides_league_canonical_idx ON game_sides (league_canonical);
-CREATE INDEX IF NOT EXISTS game_sides_league_team_canonical_idx ON game_sides (league_canonical, team_canonical);
+CREATE INDEX IF NOT EXISTS game_sides_league_canonical_idx ON game_sides (league_canonical) STORING (league, team, team_canonical);
+CREATE INDEX IF NOT EXISTS game_sides_league_team_canonical_idx ON game_sides (league_canonical, team_canonical) STORING (league, team);
 
 CREATE TABLE IF NOT EXISTS game_skaters (
     game_id TEXT NOT NULL,
@@ -59,12 +59,7 @@ CREATE INDEX IF NOT EXISTS games_date_ingested_idx ON games (date DESC, ingested
 CREATE INDEX IF NOT EXISTS games_ingested_at_idx ON games (ingested_at DESC);
 
 -- Ingest: stale game scan
-CREATE INDEX IF NOT EXISTS games_parser_version_idx ON games (parser_version);
-
--- Dedup: fingerprint lookup. CockroachDB silently accepts a B-tree index on JSONB
--- but does NOT use it for `=` lookups (it falls back to a full scan), so use an
--- inverted index. The dedup query uses `@>` containment so the planner can use it.
-CREATE INDEX IF NOT EXISTS games_fingerprint_idx ON games USING GIN (fingerprint);
+CREATE INDEX IF NOT EXISTS games_parser_version_idx ON games (parser_version) STORING (source, modified_time);
 
 -- Search: player name ILIKE
 CREATE INDEX IF NOT EXISTS game_skaters_name_idx ON game_skaters USING GIN (name gin_trgm_ops);
