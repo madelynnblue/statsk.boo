@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT ON (g.date, g.id)\n                      g.id, g.canonical_id, g.date, g.periods,\n                      home.team as home_team, home.league as home_league,\n                      away.team as away_team, away.league as away_league,\n                      g.tournament, g.venue_name\n               FROM games g\n               JOIN game_sides home ON home.game_id = g.id AND home.side = 'home'\n               JOIN game_sides away ON away.game_id = g.id AND away.side = 'away'\n               WHERE g.tournament ILIKE $1\n                  OR g.venue_name ILIKE $1\n                  OR g.venue_city ILIKE $1\n               ORDER BY g.date DESC, g.id\n               LIMIT 200",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "canonical_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 3,
+        "name": "periods",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "home_team",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "home_league",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "away_team",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "away_league",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "tournament",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "venue_name",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "14c99a2629942cf0557de16be2da219d6ae27fd557da4f8f0da6db2803ea9bab"
+}

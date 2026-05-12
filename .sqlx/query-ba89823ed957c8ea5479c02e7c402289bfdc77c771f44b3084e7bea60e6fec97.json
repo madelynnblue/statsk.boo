@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT MAX(ingested_at) as ts FROM games",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ts",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "ba89823ed957c8ea5479c02e7c402289bfdc77c771f44b3084e7bea60e6fec97"
+}

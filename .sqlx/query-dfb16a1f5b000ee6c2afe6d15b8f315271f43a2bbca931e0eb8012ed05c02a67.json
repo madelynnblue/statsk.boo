@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT gs.name, gs.number, gsi.league\n               FROM game_skaters gs\n               JOIN game_sides gsi ON gsi.game_id = gs.game_id AND gsi.side = gs.side\n               WHERE gs.name ILIKE $1\n               ORDER BY 3, 1\n               LIMIT 200",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "number",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "league",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "dfb16a1f5b000ee6c2afe6d15b8f315271f43a2bbca931e0eb8012ed05c02a67"
+}

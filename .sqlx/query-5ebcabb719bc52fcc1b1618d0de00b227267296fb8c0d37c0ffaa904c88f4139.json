@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT game_id, side as \"side!: String\", stats\n               FROM game_summary WHERE game_id = ANY($1)",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "game_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "side!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "stats",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "5ebcabb719bc52fcc1b1618d0de00b227267296fb8c0d37c0ffaa904c88f4139"
+}

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO game_summary (game_id, side, stats) VALUES ($1, 'home', $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "40f81fbb03abfcd0b3354fcbc3bae4758798cf797d79be90f0023ad28f73ca8e"
+}

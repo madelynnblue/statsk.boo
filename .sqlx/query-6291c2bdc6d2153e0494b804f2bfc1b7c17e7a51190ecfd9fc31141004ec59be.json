@@ -1,0 +1,71 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT g.id, g.canonical_id, g.date, g.periods,\n                  team_side.side as \"side!: String\",\n                  team_side.league, team_side.team,\n                  opp.league as opp_league, opp.team as opp_team\n           FROM games g\n           JOIN game_sides team_side ON team_side.game_id = g.id\n           JOIN game_sides opp ON opp.game_id = g.id AND opp.side != team_side.side\n           WHERE team_side.league_canonical = $1 AND team_side.team_canonical = $2\n           ORDER BY g.date DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "canonical_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 3,
+        "name": "periods",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "side!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "league",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "team",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "opp_league",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "opp_team",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "6291c2bdc6d2153e0494b804f2bfc1b7c17e7a51190ecfd9fc31141004ec59be"
+}

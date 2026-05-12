@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT team, team_canonical FROM game_sides WHERE league_canonical = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "team",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "team_canonical",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "08e4740c64f38355317b89bb5700f211e237aed82d847ff4bb971c2c887c8221"
+}
