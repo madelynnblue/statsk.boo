@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT g.canonical_id, g.date, g.home_score, g.away_score,\n                  home.team as home_team, home.league as home_league,\n                  away.team as away_team, away.league as away_league\n           FROM games g\n           JOIN game_sides home ON home.game_id = g.id AND home.side = 'home'\n           JOIN game_sides away ON away.game_id = g.id AND away.side = 'away'\n           ORDER BY g.date DESC, g.ingested_at DESC\n           LIMIT 25",
+  "query": "SELECT g.canonical_id, g.date, g.home_score, g.away_score,\n                  home.team as home_team, home.league as home_league,\n                  away.team as away_team, away.league as away_league\n           FROM (SELECT id, canonical_id, date, ingested_at, home_score, away_score\n                 FROM games ORDER BY date DESC, ingested_at DESC LIMIT 25) g\n           INNER LOOKUP JOIN game_sides home ON home.game_id = g.id AND home.side = 'home'\n           INNER LOOKUP JOIN game_sides away ON away.game_id = g.id AND away.side = 'away'\n           ORDER BY g.date DESC, g.ingested_at DESC",
   "describe": {
     "columns": [
       {
@@ -58,5 +58,5 @@
       true
     ]
   },
-  "hash": "04f9210d4418d1389fd045ec01e1573fdd9118bef9a9b666677570cb87645d9c"
+  "hash": "3909cae3ed85c05b44f83b29cb5c1fd6ae6bcdce56cbc913e307a785be1a0f9d"
 }

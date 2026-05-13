@@ -8,11 +8,11 @@ pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppEr
         r#"SELECT g.canonical_id, g.date, g.home_score, g.away_score,
                   home.team as home_team, home.league as home_league,
                   away.team as away_team, away.league as away_league
-           FROM games g
-           JOIN game_sides home ON home.game_id = g.id AND home.side = 'home'
-           JOIN game_sides away ON away.game_id = g.id AND away.side = 'away'
-           ORDER BY g.date DESC, g.ingested_at DESC
-           LIMIT 25"#,
+           FROM (SELECT id, canonical_id, date, ingested_at, home_score, away_score
+                 FROM games ORDER BY date DESC, ingested_at DESC LIMIT 25) g
+           INNER LOOKUP JOIN game_sides home ON home.game_id = g.id AND home.side = 'home'
+           INNER LOOKUP JOIN game_sides away ON away.game_id = g.id AND away.side = 'away'
+           ORDER BY g.date DESC, g.ingested_at DESC"#,
     )
     .fetch_all(&*state.pool)
     .await?;

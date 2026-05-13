@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO games\n               (id, source, date, parser_version, version, game_data,\n                modified_time, fingerprint, canonical_id)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Date",
+        "Int8",
+        "Text",
+        "Jsonb",
+        "Timestamptz",
+        "Jsonb",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a3b9c3c63b627b2a847c992713d5355ca1d452124d74a152bbc434864aee223e"
+}

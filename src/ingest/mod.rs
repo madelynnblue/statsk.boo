@@ -360,20 +360,14 @@ async fn commit_file(
 
         sqlx::query!(
             r#"INSERT INTO games
-               (id, source, date, parser_version, version, tournament, host_league,
-                venue_name, venue_city, venue_state, game_data,
+               (id, source, date, parser_version, version, game_data,
                 modified_time, fingerprint, canonical_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"#,
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
             prep.file_id,
             prep.source_str,
             prep.date,
             parse::PARSER_VERSION,
             prep.game.version,
-            prep.game.tournament,
-            prep.game.host_league,
-            prep.game.venue.name,
-            prep.game.venue.city,
-            prep.game.venue.state,
             &prep.game_data,
             prep.modified_time,
             &prep.fingerprint_json,

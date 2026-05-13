@@ -1,27 +1,27 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT side as \"side!: String\", league, team, color\n           FROM game_sides WHERE game_id = $1",
+  "query": "SELECT id, date, source, game_data FROM games WHERE canonical_id = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "side!: String",
+        "name": "id",
         "type_info": "Text"
       },
       {
         "ordinal": 1,
-        "name": "league",
-        "type_info": "Text"
+        "name": "date",
+        "type_info": "Date"
       },
       {
         "ordinal": 2,
-        "name": "team",
+        "name": "source",
         "type_info": "Text"
       },
       {
         "ordinal": 3,
-        "name": "color",
-        "type_info": "Text"
+        "name": "game_data",
+        "type_info": "Jsonb"
       }
     ],
     "parameters": {
@@ -31,10 +31,10 @@
     },
     "nullable": [
       false,
-      true,
-      true,
+      false,
+      false,
       true
     ]
   },
-  "hash": "1ac23fcfb9d65642ab702a4e4d6e009a147a8201fb5be410e5bec2a7c5494df4"
+  "hash": "6c83f781533923661d853eed3571900754fb568b789b82dabeed2e4a703acc9d"
 }
