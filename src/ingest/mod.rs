@@ -232,6 +232,8 @@ struct PreparedInsert {
     fingerprint_json: serde_json::Value,
     periods: serde_json::Value,
     penalties: serde_json::Value,
+    home_score: i16,
+    away_score: i16,
     home_stats: Option<(serde_json::Value, serde_json::Value)>,
 }
 
@@ -277,6 +279,8 @@ async fn prepare_file(
     };
     let canonical_id = compute_canonical_id(&fingerprint);
     let fingerprint_json = serde_json::to_value(&fingerprint)?;
+    let home_score = game.total_score("home");
+    let away_score = game.total_score("away");
     let periods = serde_json::to_value(&game.periods)?;
     let penalties = serde_json::to_value(&game.penalties)?;
     let home_stats = game
@@ -335,6 +339,8 @@ async fn prepare_file(
         fingerprint_json,
         periods,
         penalties,
+        home_score,
+        away_score,
         home_stats,
     }))
 }
@@ -365,8 +371,8 @@ async fn commit_file(
             r#"INSERT INTO games
                (id, source, date, parser_version, version, tournament, host_league,
                 venue_name, venue_city, venue_state, periods, penalties,
-                modified_time, fingerprint, canonical_id)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"#,
+                modified_time, fingerprint, canonical_id, home_score, away_score)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"#,
             prep.file_id,
             prep.source_str,
             prep.date,
@@ -382,6 +388,8 @@ async fn commit_file(
             prep.modified_time,
             &prep.fingerprint_json,
             prep.canonical_id,
+            prep.home_score,
+            prep.away_score,
         )
         .execute(&mut *tx)
         .await?;
@@ -544,6 +552,8 @@ async fn insert_parsed_file(
     };
     let canonical_id = compute_canonical_id(&fingerprint);
     let fingerprint_json = serde_json::to_value(&fingerprint)?;
+    let home_score = game.total_score("home");
+    let away_score = game.total_score("away");
     let periods = serde_json::to_value(&game.periods)?;
     let penalties = serde_json::to_value(&game.penalties)?;
     let home_stats = game
@@ -608,6 +618,8 @@ async fn insert_parsed_file(
             fingerprint_json,
             periods,
             penalties,
+            home_score,
+            away_score,
             home_stats,
         },
     )

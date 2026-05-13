@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use crate::canon::{best_name, canonicalize_league, canonicalize_team};
-use crate::models::{Period, periods_score};
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
 use axum::response::Html;
@@ -137,7 +136,7 @@ pub async fn handle(
 
         let game_rows = sqlx::query!(
             r#"SELECT DISTINCT ON (g.date, g.id)
-                      g.id, g.canonical_id, g.date, g.periods,
+                      g.canonical_id, g.date, g.home_score, g.away_score,
                       home.team as home_team, home.league as home_league,
                       away.team as away_team, away.league as away_league,
                       g.tournament, g.venue_name
@@ -154,23 +153,21 @@ pub async fn handle(
         .fetch_all(&*state.pool)
         .await?;
 
-        let mut games: Vec<GameResult> = Vec::new();
-        for r in game_rows {
-            let periods: Vec<Period> =
-                serde_json::from_value(r.periods).map_err(anyhow::Error::from)?;
-            games.push(GameResult {
+        let games: Vec<GameResult> = game_rows
+            .into_iter()
+            .map(|r| GameResult {
                 game_id: r.canonical_id,
                 date: r.date,
                 home_team: r.home_team.unwrap_or_default(),
                 home_league: r.home_league.unwrap_or_default(),
                 away_team: r.away_team.unwrap_or_default(),
                 away_league: r.away_league.unwrap_or_default(),
-                home_score: periods_score(&periods, "home"),
-                away_score: periods_score(&periods, "away"),
+                home_score: r.home_score,
+                away_score: r.away_score,
                 tournament: r.tournament,
                 venue_name: r.venue_name,
-            });
-        }
+            })
+            .collect();
 
         (players, teams, leagues, games)
     } else {
