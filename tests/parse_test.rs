@@ -15,6 +15,8 @@ struct Fixture {
     penalties: usize,
     /// Expected home/away summary player counts
     summary_players: (usize, usize),
+    /// Expected (home, away) final scores
+    scores: (i16, i16),
 }
 
 const FIXTURES: &[Fixture] = &[
@@ -25,6 +27,9 @@ const FIXTURES: &[Fixture] = &[
         star_pass_counts: &[8, 6],
         penalties: 31,
         summary_players: (13, 13),
+        // Score sheet sums to 175 due to a known data-entry error in an SP trip cell;
+        // IGRF TOTAL POINTS (174) is authoritative.
+        scores: (174, 164),
     },
     Fixture {
         path: "TestSheet.xlsx",
@@ -33,6 +38,7 @@ const FIXTURES: &[Fixture] = &[
         star_pass_counts: &[3, 1],
         penalties: 61,
         summary_players: (15, 15),
+        scores: (117, 199),
     },
     Fixture {
         path: "CascadianClash2026_Palouse_vs_RatCity.xlsx",
@@ -41,6 +47,7 @@ const FIXTURES: &[Fixture] = &[
         star_pass_counts: &[5, 7],
         penalties: 26,
         summary_players: (15, 15),
+        scores: (133, 149),
     },
     Fixture {
         path: "BoulderCounty2026_vs_RockyMountain.xlsx",
@@ -49,19 +56,18 @@ const FIXTURES: &[Fixture] = &[
         star_pass_counts: &[4, 3],
         penalties: 52,
         summary_players: (15, 14),
+        scores: (137, 270),
+    },
+    Fixture {
+        path: "boulder-dames.xlsx",
+        period_count: 2,
+        jam_counts: &[23, 25],
+        star_pass_counts: &[2, 3],
+        penalties: 25,
+        summary_players: (15, 10),
+        scores: (198, 97),
     },
 ];
-
-#[test]
-fn test_boise_boulder_score() {
-    let game = parse_fixture("boise-boulder.xlsx");
-    // Official result is Boise 174 – Boulder 164. The statsbook file has a
-    // 1-point data entry error in an SP trip cell (row 52, Trip 5 shows 3
-    // but the sheet's own running-total formula shows only 13 points were
-    // added, not 14). We parse what the cells contain, so home reads 175.
-    assert_eq!(game.total_score("home"), 175);
-    assert_eq!(game.total_score("away"), 164);
-}
 
 fn parse_fixture(path: &str) -> GameData {
     let full = format!("tests/fixtures/{}", path);
@@ -87,10 +93,18 @@ fn test_fixture_corpus() {
         );
 
         // Scores
-        let home_total = game.total_score("home");
-        let away_total = game.total_score("away");
-        assert!(home_total >= 0, "{}: negative home score", f.path);
-        assert!(away_total >= 0, "{}: negative away score", f.path);
+        assert_eq!(
+            game.total_score("home"),
+            f.scores.0,
+            "{}: home score",
+            f.path
+        );
+        assert_eq!(
+            game.total_score("away"),
+            f.scores.1,
+            "{}: away score",
+            f.path
+        );
 
         // Periods and jams (these catch regressions in star pass / SP row parsing)
         assert_eq!(

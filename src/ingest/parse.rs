@@ -6,7 +6,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 11;
+pub const PARSER_VERSION: i64 = 12;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes)?;
@@ -32,8 +32,12 @@ pub fn parse_statsbook_with_date(bytes: &[u8]) -> Result<(GameData, Option<chron
     let penalties = parse_penalties(&mut wb, &igrf)?;
     let game_summary = parse_game_summary(&mut wb, &igrf).ok();
 
-    let home_score = periods_score(&periods, "home");
-    let away_score = periods_score(&periods, "away");
+    let (home_score, away_score) = parse_igrf_scores(&mut wb).unwrap_or_else(|| {
+        (
+            periods_score(&periods, "home"),
+            periods_score(&periods, "away"),
+        )
+    });
     let game = GameData {
         version,
         venue,
@@ -219,6 +223,25 @@ fn parse_igrf_meta<R: std::io::Read + std::io::Seek>(
     let host_league = cell_str(&sheet, 4, 8);
     let date = sheet.get_value((6, 1)).and_then(|d| d.as_date());
     Ok((tournament, host_league, date))
+}
+
+/// Read the official final score from the IGRF sheet's TOTAL POINTS row (row 38 in Excel, row 37 0-indexed).
+/// Returns (home_score, away_score) only when both cells hold a usable numeric value
+/// (i.e. the formula `IF(COUNT(...)=0,"",SUM(...))` has a cached numeric result).
+/// Returns None to signal fallback to jam summing whenever the row is missing, the label is wrong,
+/// or either score cell is empty/non-numeric (which happens when a writer saved the file without
+/// evaluating formulas — calamine only sees cached values).
+fn parse_igrf_scores<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Option<(i16, i16)> {
+    let sheet = wb.worksheet_range("IGRF").ok()?;
+    // Require the TOTAL POINTS label so we don't trust a misaligned row.
+    let label = cell_str(&sheet, 37, 0)?;
+    if !label.contains("TOTAL POINTS") {
+        return None;
+    }
+    // Both score cells must contain a cached numeric value; otherwise fall back to jam summing.
+    let home = sheet.get_value((37, 2)).and_then(|d| d.as_i64())? as i16;
+    let away = sheet.get_value((37, 9)).and_then(|d| d.as_i64())? as i16;
+    Some((home, away))
 }
 
 fn parse_team<R: std::io::Read + std::io::Seek>(
