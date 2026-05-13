@@ -6,7 +6,7 @@ use serde::Serialize;
 
 pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppError> {
     let rows = sqlx::query!(
-        r#"SELECT g.id, g.date, g.periods,
+        r#"SELECT g.canonical_id, g.date, g.periods,
                   home.team as home_team, home.league as home_league,
                   away.team as away_team, away.league as away_league
            FROM games g
@@ -25,7 +25,7 @@ pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppEr
         let home_score = periods_score(&periods, "home");
         let away_score = periods_score(&periods, "away");
         games.push(RecentGame {
-            game_id: r.id.clone(),
+            game_id: r.canonical_id.clone(),
             date: r.date,
             home_score,
             away_score,

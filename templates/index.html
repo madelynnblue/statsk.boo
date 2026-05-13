@@ -11,15 +11,13 @@
   <tbody>
     {% for g in games %}
     <tr>
-      <td>{% if g.date %}{{ g.date }}{% endif %}</td>
+      <td><a href="/game/{{ g.game_id }}">{% if g.date %}{{ g.date }}{% endif %}</a></td>
       <td><a href="/team?league={{ g.home_league | urlencode }}&team={{ g.home_team | urlencode }}">{{ g.home_team }}</a></td>
       <td><a href="/team?league={{ g.away_league | urlencode }}&team={{ g.away_team | urlencode }}">{{ g.away_team }}</a></td>
       <td>
-        <a href="/game/{{ g.game_id }}">
-          {% if g.home_score is not none %}{{ g.home_score }}{% else %}—{% endif %}
-          –
-          {% if g.away_score is not none %}{{ g.away_score }}{% else %}—{% endif %}
-        </a>
+        {% if g.home_score is not none %}{{ g.home_score }}{% else %}—{% endif %}
+        –
+        {% if g.away_score is not none %}{{ g.away_score }}{% else %}—{% endif %}
       </td>
     </tr>
     {% endfor %}
