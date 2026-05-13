@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::canon::canonicalize_league;
-use crate::models::{Period, SideStats, SummaryPlayer, periods_score};
+use crate::models::{Period, SideStats, SummaryPlayer};
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
 use axum::response::Html;
@@ -55,7 +55,7 @@ pub async fn handle(
     let league_canonical = canonicalize_league(&params.league);
 
     let rows = sqlx::query!(
-        r#"SELECT g.id, g.canonical_id, g.date, g.periods,
+        r#"SELECT g.id, g.canonical_id, g.date, g.periods, g.home_score, g.away_score,
                   gs.side as "side!: String",
                   player_side.league, player_side.team,
                   opp.league as opp_league, opp.team as opp_team
@@ -127,12 +127,10 @@ pub async fn handle(
             }
         }
 
-        let home_score = periods_score(&periods, "home");
-        let away_score = periods_score(&periods, "away");
         let (our_score, their_score) = if side == "home" {
-            (home_score, away_score)
+            (row.home_score, row.away_score)
         } else {
-            (away_score, home_score)
+            (row.away_score, row.home_score)
         };
         let score = format!("{}–{}", our_score, their_score);
         let outcome = if our_score > their_score {
