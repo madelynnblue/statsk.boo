@@ -139,6 +139,7 @@ pub async fn handle(
         home_penalties,
         away_penalties,
         game_id => canonical_id,
+        drive_file_id => row.id,
         source => row.source,
     })?;
     Ok(Html(html))

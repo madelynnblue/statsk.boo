@@ -14,7 +14,7 @@
   thead .hl { background: var(--hl-head); }
 </style>
 <h1>{{ game.home.team | default("Home") }} vs {{ game.away.team | default("Away") }}</h1>
-{% if source == "drive" %}<p><a href="https://drive.google.com/file/d/{{ game_id }}/view" target="_blank">View statsbook on Google Drive</a></p>{% endif %}
+{% if source == "drive" %}<p><a href="https://drive.google.com/file/d/{{ drive_file_id }}/view" target="_blank">View statsbook on Google Drive</a></p>{% endif %}
 <p>
   {{ date }}
   {% if game.venue.name %} · <a href="/search?q={{ game.venue.name | urlencode }}">{{ game.venue.name }}</a>{% endif %}
