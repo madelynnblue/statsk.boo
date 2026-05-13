@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT g.id, g.canonical_id, g.date, g.periods,\n                  gs.side as \"side!: String\",\n                  player_side.league, player_side.team,\n                  opp.league as opp_league, opp.team as opp_team\n           FROM games g\n           JOIN game_skaters gs ON gs.game_id = g.id\n           JOIN game_sides player_side ON player_side.game_id = g.id AND player_side.side = gs.side\n           JOIN game_sides opp ON opp.game_id = g.id AND opp.side != gs.side\n           WHERE player_side.league_canonical = $1 AND gs.name = $2 AND gs.number = $3\n           ORDER BY g.date DESC",
+  "query": "SELECT g.id, g.canonical_id, g.date, g.periods, g.home_score, g.away_score,\n                  gs.side as \"side!: String\",\n                  player_side.league, player_side.team,\n                  opp.league as opp_league, opp.team as opp_team\n           FROM games g\n           JOIN game_skaters gs ON gs.game_id = g.id\n           JOIN game_sides player_side ON player_side.game_id = g.id AND player_side.side = gs.side\n           JOIN game_sides opp ON opp.game_id = g.id AND opp.side != gs.side\n           WHERE player_side.league_canonical = $1 AND gs.name = $2 AND gs.number = $3\n           ORDER BY g.date DESC",
   "describe": {
     "columns": [
       {
@@ -25,26 +25,36 @@
       },
       {
         "ordinal": 4,
+        "name": "home_score",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 5,
+        "name": "away_score",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 6,
         "name": "side!: String",
         "type_info": "Text"
       },
       {
-        "ordinal": 5,
+        "ordinal": 7,
         "name": "league",
         "type_info": "Text"
       },
       {
-        "ordinal": 6,
+        "ordinal": 8,
         "name": "team",
         "type_info": "Text"
       },
       {
-        "ordinal": 7,
+        "ordinal": 9,
         "name": "opp_league",
         "type_info": "Text"
       },
       {
-        "ordinal": 8,
+        "ordinal": 10,
         "name": "opp_team",
         "type_info": "Text"
       }
@@ -62,11 +72,13 @@
       false,
       false,
       false,
+      false,
+      false,
       true,
       true,
       true,
       true
     ]
   },
-  "hash": "b653c2042212e3bf3827bcaa9150c694aa811af9357dabd5a72dbfb743e70e28"
+  "hash": "4287a4958de38eaf390da320d24f0913784fd1adb7bba1a774992f5089d35109"
 }
