@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::models::{GameData, GameSummary, Penalty, SideStats, Skater, TeamData, Venue};
+use crate::models::{GameData, Penalty};
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Path, State};
 use axum::response::Html;
@@ -11,118 +11,18 @@ pub async fn handle(
     Path(canonical_id): Path<String>,
 ) -> Result<Html<String>, AppError> {
     let row = sqlx::query!(
-        r#"SELECT id, date, source, version, tournament, host_league,
-                  venue_name, venue_city, venue_state,
-                  periods, penalties
-           FROM games WHERE canonical_id = $1"#,
+        r#"SELECT id, date, source, game_data FROM games WHERE canonical_id = $1"#,
         canonical_id,
     )
     .fetch_optional(&*state.pool)
     .await?
     .ok_or(AppError::NotFound)?;
 
-    let game_id = &row.id;
+    let game: GameData = serde_json::from_value(row.game_data.ok_or(AppError::NotFound)?)
+        .map_err(anyhow::Error::from)?;
 
-    let side_rows = sqlx::query!(
-        r#"SELECT side as "side!: String", league, team, color
-           FROM game_sides WHERE game_id = $1"#,
-        game_id,
-    )
-    .fetch_all(&*state.pool)
-    .await?;
-    if side_rows.len() != 2 {
-        return Err(AppError::NotFound);
-    }
-
-    let skater_rows = sqlx::query!(
-        r#"SELECT side as "side!: String", number, name
-           FROM game_skaters WHERE game_id = $1"#,
-        game_id,
-    )
-    .fetch_all(&*state.pool)
-    .await?;
-
-    let summary_rows = sqlx::query!(
-        r#"SELECT side as "side!: String", stats
-           FROM game_summary WHERE game_id = $1"#,
-        game_id,
-    )
-    .fetch_all(&*state.pool)
-    .await?;
-
-    let home_side = side_rows
-        .iter()
-        .find(|s| s.side == "home")
-        .ok_or(AppError::NotFound)?;
-    let away_side = side_rows
-        .iter()
-        .find(|s| s.side == "away")
-        .ok_or(AppError::NotFound)?;
-
-    let home_skaters: Vec<Skater> = skater_rows
-        .iter()
-        .filter(|s| s.side == "home")
-        .map(|s| Skater {
-            number: s.number.clone(),
-            name: s.name.clone(),
-        })
-        .collect();
-    let away_skaters: Vec<Skater> = skater_rows
-        .iter()
-        .filter(|s| s.side == "away")
-        .map(|s| Skater {
-            number: s.number.clone(),
-            name: s.name.clone(),
-        })
-        .collect();
-
-    let game_summary = if let (Some(home_sum), Some(away_sum)) = (
-        summary_rows.iter().find(|s| s.side == "home"),
-        summary_rows.iter().find(|s| s.side == "away"),
-    ) {
-        let home_stats: SideStats =
-            serde_json::from_value(home_sum.stats.clone()).map_err(anyhow::Error::from)?;
-        let away_stats: SideStats =
-            serde_json::from_value(away_sum.stats.clone()).map_err(anyhow::Error::from)?;
-        Some(GameSummary {
-            home_players: home_stats.players,
-            away_players: away_stats.players,
-            home_totals: home_stats.totals,
-            away_totals: away_stats.totals,
-        })
-    } else {
-        None
-    };
-
-    let game = GameData {
-        version: row.version,
-        venue: Venue {
-            name: row.venue_name,
-            city: row.venue_city,
-            state: row.venue_state,
-        },
-        tournament: row.tournament,
-        host_league: row.host_league,
-        home: TeamData {
-            league: home_side.league.clone(),
-            team: home_side.team.clone(),
-            color: home_side.color.clone(),
-            skaters: home_skaters,
-        },
-        away: TeamData {
-            league: away_side.league.clone(),
-            team: away_side.team.clone(),
-            color: away_side.color.clone(),
-            skaters: away_skaters,
-        },
-        periods: serde_json::from_value(row.periods).map_err(anyhow::Error::from)?,
-        penalties: serde_json::from_value(row.penalties).map_err(anyhow::Error::from)?,
-        game_summary,
-    };
-
-    let home_score = game.total_score("home");
-    let away_score = game.total_score("away");
-
+    let home_score = game.home_score;
+    let away_score = game.away_score;
     let home_names = skater_name_map(&game, "home");
     let away_names = skater_name_map(&game, "away");
     let home_penalties = group_penalties(&game.penalties, "home", &home_names);

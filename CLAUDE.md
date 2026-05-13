@@ -13,18 +13,26 @@ cargo test -- test_parse # single test
 
 ## Database
 
-CockroachDB runs locally in a Docker container named `cockroach`. The `cockroach` binary is **not** on the host — always use `docker exec` to reach it:
+CockroachDB runs locally in a Docker container named `cockroachdb`. The `cockroach` binary is **not** on the host — always use `docker exec` to reach it:
 
 ```bash
 # Run SQL (uses .env DATABASE_URL's database name)
-docker exec cockroach cockroach sql --insecure -d wsb -e "<sql>"
+docker exec cockroachdb cockroach sql --insecure -d wsb -e "<sql>"
 
 # Drop and recreate the dev database
-docker exec cockroach cockroach sql --insecure -e "DROP DATABASE IF EXISTS wsb; CREATE DATABASE wsb;"
+docker exec cockroachdb cockroach sql --insecure -e "DROP DATABASE IF EXISTS wsb; CREATE DATABASE wsb;"
 
 # Recreate DB (reads DATABASE_URL from .env)
-source .env && docker exec cockroach cockroach sql --insecure -e "DROP DATABASE IF EXISTS wsb; CREATE DATABASE wsb;"
+source .env && docker exec cockroachdb cockroach sql --insecure -e "DROP DATABASE IF EXISTS wsb; CREATE DATABASE wsb;"
 ```
+
+After adding, removing, or changing any `sqlx::query!` call, regenerate the compile-time query metadata:
+
+```bash
+source .env && cargo sqlx prepare
+```
+
+This updates the `.sqlx/` directory. Commit the result alongside the query change.
 
 ## Architecture
 
@@ -38,7 +46,7 @@ WSB (WFTDA Statsbook Browser) downloads WFTDA statsbook `.xlsx` files from a pub
 - Game = unique `id` text PK (Drive file ID for `source='drive'`, relative path for `source='file'`)
 
 **Database:** Relational schema with four tables and GIN indexes for full-text search:
-- `games` (`id TEXT PK`, `source TEXT` (`'drive'`|`'file'`), `date`, `ingested_at`, `parser_version`, `version`, `tournament`, `host_league`, `venue_*`, `periods JSONB`, `penalties JSONB`, `modified_time`, `fingerprint JSONB`, `canonical_id TEXT`)
+- `games` (`id TEXT PK`, `source TEXT` (`'drive'`|`'file'`), `date`, `ingested_at`, `parser_version`, `version`, `tournament`, `host_league`, `venue_*`, `modified_time`, `fingerprint JSONB`, `canonical_id TEXT`, `home_score INT2` (computed), `away_score INT2` (computed), `game_data JSONB` — full serialized `GameData` struct; `home_score`/`away_score` are derived from `game_data->>'home_score'`/`away_score`)
 - `game_sides` (`game_id FK`, `side`, `league`, `team`, `color`, `league_canonical`, `team_canonical`)
 - `game_skaters` (`game_id FK`, `side`, `number`, `name`)
 - `game_summary` (`game_id FK`, `side`, `stats JSONB`)

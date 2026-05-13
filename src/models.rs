@@ -11,6 +11,8 @@ pub struct GameData {
     pub periods: Vec<Period>,
     pub penalties: Vec<Penalty>,
     pub game_summary: Option<GameSummary>,
+    pub home_score: i16,
+    pub away_score: i16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -170,7 +172,11 @@ pub struct Penalty {
 
 impl GameData {
     pub fn total_score(&self, side: &str) -> i16 {
-        periods_score(&self.periods, side)
+        if side == "home" {
+            self.home_score
+        } else {
+            self.away_score
+        }
     }
 }
 
@@ -257,6 +263,8 @@ mod tests {
             }],
             penalties: vec![],
             game_summary: None,
+            home_score: 4,
+            away_score: 0,
         }
     }
 

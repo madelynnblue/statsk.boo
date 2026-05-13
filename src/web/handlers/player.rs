@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::canon::canonicalize_league;
-use crate::models::{Period, SideStats, SummaryPlayer};
+use crate::models::{GameData, SideStats, SummaryPlayer};
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
 use axum::response::Html;
@@ -55,7 +55,7 @@ pub async fn handle(
     let league_canonical = canonicalize_league(&params.league);
 
     let rows = sqlx::query!(
-        r#"SELECT g.id, g.canonical_id, g.date, g.periods, g.home_score, g.away_score,
+        r#"SELECT g.id, g.canonical_id, g.date, g.game_data,
                   gs.side as "side!: String",
                   player_side.league, player_side.team,
                   opp.league as opp_league, opp.team as opp_team
@@ -90,8 +90,12 @@ pub async fn handle(
     };
 
     for row in &rows {
-        let periods: Vec<Period> =
-            serde_json::from_value(row.periods.clone()).map_err(anyhow::Error::from)?;
+        let game: GameData = serde_json::from_value(
+            row.game_data
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("missing game_data"))?,
+        )
+        .map_err(anyhow::Error::from)?;
         let side = &row.side;
         let opponent_team = row.opp_team.clone().unwrap_or_default();
         let opponent_league = row.opp_league.clone().unwrap_or_default();
@@ -102,7 +106,7 @@ pub async fn handle(
         let mut jams_as_jammer = 0u16;
         let mut jams_as_pivot = 0u16;
         let mut jams_as_blocker = 0u16;
-        for jam in periods.iter().flat_map(|p| &p.jams) {
+        for jam in game.periods.iter().flat_map(|p| &p.jams) {
             let js = if side == "home" { &jam.home } else { &jam.away };
             let is_jammer = js.jammer.as_deref() == Some(&params.number);
             let is_pivot = js
@@ -128,9 +132,9 @@ pub async fn handle(
         }
 
         let (our_score, their_score) = if side == "home" {
-            (row.home_score, row.away_score)
+            (game.home_score, game.away_score)
         } else {
-            (row.away_score, row.home_score)
+            (game.away_score, game.home_score)
         };
         let score = format!("{}–{}", our_score, their_score);
         let outcome = if our_score > their_score {

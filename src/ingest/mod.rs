@@ -3,7 +3,7 @@ pub mod parse;
 
 use crate::canon::{canonicalize_league, canonicalize_team};
 use crate::config::Config;
-use crate::models::{GameData, periods_score};
+use crate::models::GameData;
 use anyhow::Context;
 use chrono::{DateTime, NaiveDate, Utc};
 use drive::DriveClient;
@@ -230,10 +230,7 @@ struct PreparedInsert {
     game: GameData,
     canonical_id: String,
     fingerprint_json: serde_json::Value,
-    periods: serde_json::Value,
-    penalties: serde_json::Value,
-    home_score: i16,
-    away_score: i16,
+    game_data: serde_json::Value,
     home_stats: Option<(serde_json::Value, serde_json::Value)>,
 }
 
@@ -279,10 +276,7 @@ async fn prepare_file(
     };
     let canonical_id = compute_canonical_id(&fingerprint);
     let fingerprint_json = serde_json::to_value(&fingerprint)?;
-    let home_score = game.total_score("home");
-    let away_score = game.total_score("away");
-    let periods = serde_json::to_value(&game.periods)?;
-    let penalties = serde_json::to_value(&game.penalties)?;
+    let game_data = serde_json::to_value(&game)?;
     let home_stats = game
         .game_summary
         .as_ref()
@@ -337,10 +331,7 @@ async fn prepare_file(
         game,
         canonical_id,
         fingerprint_json,
-        periods,
-        penalties,
-        home_score,
-        away_score,
+        game_data,
         home_stats,
     }))
 }
@@ -370,9 +361,9 @@ async fn commit_file(
         sqlx::query!(
             r#"INSERT INTO games
                (id, source, date, parser_version, version, tournament, host_league,
-                venue_name, venue_city, venue_state, periods, penalties,
-                modified_time, fingerprint, canonical_id, home_score, away_score)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)"#,
+                venue_name, venue_city, venue_state, game_data,
+                modified_time, fingerprint, canonical_id)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)"#,
             prep.file_id,
             prep.source_str,
             prep.date,
@@ -383,13 +374,10 @@ async fn commit_file(
             prep.game.venue.name,
             prep.game.venue.city,
             prep.game.venue.state,
-            &prep.periods,
-            &prep.penalties,
+            &prep.game_data,
             prep.modified_time,
             &prep.fingerprint_json,
             prep.canonical_id,
-            prep.home_score,
-            prep.away_score,
         )
         .execute(&mut *tx)
         .await?;
@@ -516,8 +504,8 @@ fn build_fingerprint(game: &GameData, date: Option<NaiveDate>) -> anyhow::Result
             .team
             .clone()
             .ok_or_else(|| anyhow::anyhow!("missing away team"))?,
-        home_score: periods_score(&game.periods, "home"),
-        away_score: periods_score(&game.periods, "away"),
+        home_score: game.home_score,
+        away_score: game.away_score,
     })
 }
 
@@ -552,10 +540,7 @@ async fn insert_parsed_file(
     };
     let canonical_id = compute_canonical_id(&fingerprint);
     let fingerprint_json = serde_json::to_value(&fingerprint)?;
-    let home_score = game.total_score("home");
-    let away_score = game.total_score("away");
-    let periods = serde_json::to_value(&game.periods)?;
-    let penalties = serde_json::to_value(&game.penalties)?;
+    let game_data = serde_json::to_value(&game)?;
     let home_stats = game
         .game_summary
         .as_ref()
@@ -616,10 +601,7 @@ async fn insert_parsed_file(
             game,
             canonical_id,
             fingerprint_json,
-            periods,
-            penalties,
-            home_score,
-            away_score,
+            game_data,
             home_stats,
         },
     )
@@ -760,6 +742,8 @@ mod tests {
             periods: vec![],
             penalties: vec![],
             game_summary: None,
+            home_score: 0,
+            away_score: 0,
         }
     }
 

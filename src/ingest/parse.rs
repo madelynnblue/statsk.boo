@@ -6,7 +6,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 10;
+pub const PARSER_VERSION: i64 = 11;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes)?;
@@ -32,6 +32,8 @@ pub fn parse_statsbook_with_date(bytes: &[u8]) -> Result<(GameData, Option<chron
     let penalties = parse_penalties(&mut wb, &igrf)?;
     let game_summary = parse_game_summary(&mut wb, &igrf).ok();
 
+    let home_score = periods_score(&periods, "home");
+    let away_score = periods_score(&periods, "away");
     let game = GameData {
         version,
         venue,
@@ -42,6 +44,8 @@ pub fn parse_statsbook_with_date(bytes: &[u8]) -> Result<(GameData, Option<chron
         periods,
         penalties,
         game_summary,
+        home_score,
+        away_score,
     };
     Ok((game, date))
 }
