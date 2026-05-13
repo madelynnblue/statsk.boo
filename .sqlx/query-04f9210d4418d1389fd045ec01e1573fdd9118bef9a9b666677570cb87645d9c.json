@@ -1,0 +1,62 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT g.canonical_id, g.date, g.home_score, g.away_score,\n                  home.team as home_team, home.league as home_league,\n                  away.team as away_team, away.league as away_league\n           FROM games g\n           JOIN game_sides home ON home.game_id = g.id AND home.side = 'home'\n           JOIN game_sides away ON away.game_id = g.id AND away.side = 'away'\n           ORDER BY g.date DESC, g.ingested_at DESC\n           LIMIT 25",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "canonical_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 2,
+        "name": "home_score",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 3,
+        "name": "away_score",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 4,
+        "name": "home_team",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "home_league",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "away_team",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "away_league",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "04f9210d4418d1389fd045ec01e1573fdd9118bef9a9b666677570cb87645d9c"
+}

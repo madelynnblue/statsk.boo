@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO games\n               (id, source, date, parser_version, version, tournament, host_league,\n                venue_name, venue_city, venue_state, periods, penalties,\n                modified_time, fingerprint, canonical_id, home_score, away_score)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Date",
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Jsonb",
+        "Jsonb",
+        "Timestamptz",
+        "Jsonb",
+        "Text",
+        "Int2",
+        "Int2"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dc9a921ddb29b8d752d0eeaa14b34a5fbae70e39759ce28bf76920dd3c838fbe"
+}

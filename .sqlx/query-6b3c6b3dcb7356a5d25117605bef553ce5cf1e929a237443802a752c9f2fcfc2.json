@@ -1,27 +1,27 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT DISTINCT ON (g.date, g.id)\n                      g.id, g.canonical_id, g.date, g.periods,\n                      home.team as home_team, home.league as home_league,\n                      away.team as away_team, away.league as away_league,\n                      g.tournament, g.venue_name\n               FROM games g\n               JOIN game_sides home ON home.game_id = g.id AND home.side = 'home'\n               JOIN game_sides away ON away.game_id = g.id AND away.side = 'away'\n               WHERE g.tournament ILIKE $1\n                  OR g.venue_name ILIKE $1\n                  OR g.venue_city ILIKE $1\n               ORDER BY g.date DESC, g.id\n               LIMIT 200",
+  "query": "SELECT DISTINCT ON (g.date, g.id)\n                      g.canonical_id, g.date, g.home_score, g.away_score,\n                      home.team as home_team, home.league as home_league,\n                      away.team as away_team, away.league as away_league,\n                      g.tournament, g.venue_name\n               FROM games g\n               JOIN game_sides home ON home.game_id = g.id AND home.side = 'home'\n               JOIN game_sides away ON away.game_id = g.id AND away.side = 'away'\n               WHERE g.tournament ILIKE $1\n                  OR g.venue_name ILIKE $1\n                  OR g.venue_city ILIKE $1\n               ORDER BY g.date DESC, g.id\n               LIMIT 200",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "id",
-        "type_info": "Text"
-      },
-      {
-        "ordinal": 1,
         "name": "canonical_id",
         "type_info": "Text"
       },
       {
-        "ordinal": 2,
+        "ordinal": 1,
         "name": "date",
         "type_info": "Date"
       },
       {
+        "ordinal": 2,
+        "name": "home_score",
+        "type_info": "Int2"
+      },
+      {
         "ordinal": 3,
-        "name": "periods",
-        "type_info": "Jsonb"
+        "name": "away_score",
+        "type_info": "Int2"
       },
       {
         "ordinal": 4,
@@ -72,5 +72,5 @@
       true
     ]
   },
-  "hash": "14c99a2629942cf0557de16be2da219d6ae27fd557da4f8f0da6db2803ea9bab"
+  "hash": "6b3c6b3dcb7356a5d25117605bef553ce5cf1e929a237443802a752c9f2fcfc2"
 }
