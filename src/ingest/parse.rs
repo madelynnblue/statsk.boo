@@ -6,7 +6,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 9;
+pub const PARSER_VERSION: i64 = 10;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes)?;
@@ -282,15 +282,21 @@ fn parse_scores<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Result<Ve
             let mut away = parse_jam_side(&sheet, row, away_col);
             i += 1;
             // The row immediately after a jam may be an SP row carrying a star
-            // pass jammer for one or both sides.
+            // pass jammer and trip scores for one or both sides.
             let sp_row = start_row + i;
             let home_sp = matches!(sheet.get_value((sp_row, home_col)), Some(Data::String(_)));
             let away_sp = matches!(sheet.get_value((sp_row, away_col)), Some(Data::String(_)));
             if home_sp {
                 home.star_pass_jammer = cell_str(&sheet, sp_row, home_col + 1);
+                home.score += (7..=15u32)
+                    .map(|c| cell_i16(&sheet, sp_row, home_col + c))
+                    .sum::<i16>();
             }
             if away_sp {
                 away.star_pass_jammer = cell_str(&sheet, sp_row, away_col + 1);
+                away.score += (7..=15u32)
+                    .map(|c| cell_i16(&sheet, sp_row, away_col + c))
+                    .sum::<i16>();
             }
             if home_sp || away_sp {
                 i += 1;

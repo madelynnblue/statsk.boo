@@ -4,7 +4,12 @@
       "Bash(gcloud logging read *)",
       "Bash(gcloud config list *)",
       "Bash(gcloud projects list *)",
-      "Bash(docker run *)"
+      "Bash(docker run *)",
+      "Bash(pip3 install *)",
+      "Bash(python3 -)",
+      "Bash(python3 -m pip install openpyxl -q)",
+      "Bash(pip install *)",
+      "Bash(python3 -c \"import openpyxl; print\\('ok'\\)\")"
     ]
   }
 }

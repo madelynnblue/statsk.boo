@@ -19,6 +19,14 @@ struct Fixture {
 
 const FIXTURES: &[Fixture] = &[
     Fixture {
+        path: "boise-boulder.xlsx",
+        period_count: 2,
+        jam_counts: &[22, 25],
+        star_pass_counts: &[8, 6],
+        penalties: 31,
+        summary_players: (13, 13),
+    },
+    Fixture {
         path: "TestSheet.xlsx",
         period_count: 2,
         jam_counts: &[23, 23],
@@ -43,6 +51,17 @@ const FIXTURES: &[Fixture] = &[
         summary_players: (15, 14),
     },
 ];
+
+#[test]
+fn test_boise_boulder_score() {
+    let game = parse_fixture("boise-boulder.xlsx");
+    // Official result is Boise 174 – Boulder 164. The statsbook file has a
+    // 1-point data entry error in an SP trip cell (row 52, Trip 5 shows 3
+    // but the sheet's own running-total formula shows only 13 points were
+    // added, not 14). We parse what the cells contain, so home reads 175.
+    assert_eq!(game.total_score("home"), 175);
+    assert_eq!(game.total_score("away"), 164);
+}
 
 fn parse_fixture(path: &str) -> GameData {
     let full = format!("tests/fixtures/{}", path);
