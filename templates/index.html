@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Home{% endblock %}
 {% block content %}
-<p>Search for a player or team above to see career stats and game history.</p>
+<form class="search-row" action="/search" method="get">
+  <input type="search" name="q" placeholder="Search players, teams, leagues, tournaments, venues…" autofocus>
+  <button type="submit">Search</button>
+</form>
 {% if games %}
 <h2>Recent Games</h2>
 <table>

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}WSB{% endblock %} — WFTDA Stats Browser</title>
+  <title>{% block title %}WSB{% endblock %} — WFTDA Statsbook Browser</title>
   <style>
     :root {
       color-scheme: light dark;
@@ -39,11 +39,7 @@
   </style>
 </head>
 <body>
-  <header><a href="/">WSB — WFTDA Stats Browser</a></header>
-  <form class="search-row" action="/search" method="get">
-    <input type="search" name="q" placeholder="Search players or teams…" value="{{ query|default('') }}">
-    <button type="submit">Search</button>
-  </form>
+  <header><a href="/">statsk.boo — WFTDA Statsbook Browser</a></header>
   {% block content %}{% endblock %}
 </body>
 </html>
