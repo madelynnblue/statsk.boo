@@ -50,7 +50,7 @@ pub async fn handle(
         let player_rows = sqlx::query!(
             r#"SELECT gs.name, gs.number, gsi.league
                FROM game_skaters gs
-               JOIN game_sides gsi ON gsi.game_id = gs.game_id AND gsi.side = gs.side
+               INNER LOOKUP JOIN game_sides gsi ON gsi.game_id = gs.game_id AND gsi.side = gs.side
                WHERE gs.name ILIKE $1
                ORDER BY 3, 1
                LIMIT 200"#,
