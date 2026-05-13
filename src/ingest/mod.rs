@@ -103,9 +103,11 @@ pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
         ))
     });
 
-    // One transaction at a time: the fingerprint GIN scan reads the whole table snapshot,
-    // which concurrent writes invalidate, causing RETRY_SERIALIZABLE on commit.
-    // Downloads and parsing run in parallel; only the DB transaction step is serialized.
+    // Serializes DB transactions within this process to reduce RETRY_SERIALIZABLE
+    // conflicts: the fingerprint GIN scan reads the whole table snapshot, and concurrent
+    // writes from the same process invalidate it. Cross-process conflicts (e.g. rolling
+    // restart) are handled by CockroachDB's serializable isolation via the is_retryable
+    // retry loop in commit_file — tx_sem provides no cross-process guarantee.
     // `run_ingest` commits in oldest-first order so MAX(modified_time) is a monotonic
     // cursor: a crash leaves it pointing to the last committed file, and all remaining
     // files have a larger modifiedTime and will be picked up on the next run.
@@ -185,7 +187,13 @@ async fn run_ingest(
     let mut i = 0usize;
     while let Some(join_result) = ordered.next().await {
         i += 1;
-        let (name, prep_result) = join_result.expect("prepare task panicked");
+        let (name, prep_result) = match join_result {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("prepare task panicked ({i}/{n}): {e}");
+                continue;
+            }
+        };
         match prep_result {
             Err(e) => warn!("skipping {name}: {e:#}"),
             Ok(None) => {}
@@ -555,9 +563,14 @@ async fn insert_parsed_file(
         })
         .transpose()?;
 
+    // Exclude our own row: this function re-ingests an existing row whose canonical_id
+    // is derived from the same parsed contents, so without this filter the row would
+    // match itself and the `dup.modified_time >= modified_time` check would short-circuit
+    // every re-ingest, making `reingest_stale` silently a no-op.
     let canonical_duplicate = sqlx::query!(
-        "SELECT id, modified_time FROM games WHERE canonical_id = $1",
+        "SELECT id, modified_time FROM games WHERE canonical_id = $1 AND id <> $2",
         canonical_id,
+        file_id,
     )
     .fetch_optional(pool)
     .await?;
