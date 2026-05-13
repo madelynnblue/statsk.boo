@@ -39,11 +39,14 @@
 
   {% if leagues %}
   <h2>Leagues</h2>
-  <ul>
+  <table>
+    <thead><tr><th>League</th></tr></thead>
+    <tbody>
     {% for l in leagues %}
-    <li><a href="/league?league={{ l | urlencode }}">{{ l }}</a></li>
+      <tr><td><a href="/league?league={{ l | urlencode }}">{{ l }}</a></td></tr>
     {% endfor %}
-  </ul>
+    </tbody>
+  </table>
   {% endif %}
 
   {% if games %}
