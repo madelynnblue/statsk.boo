@@ -15,12 +15,14 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = std::sync::Arc::new(cfg);
     let pool = std::sync::Arc::new(pool);
+    let cache = std::sync::Arc::new(wsb::cache::Cache::new());
 
     let ingest_cfg = cfg.clone();
     let ingest_pool = pool.clone();
+    let ingest_cache = cache.clone();
     tokio::spawn(async move {
-        wsb::ingest::ingest_loop(ingest_cfg, ingest_pool).await;
+        wsb::ingest::ingest_loop(ingest_cfg, ingest_pool, ingest_cache).await;
     });
 
-    wsb::web::serve(cfg, pool).await
+    wsb::web::serve(cfg, pool, cache).await
 }

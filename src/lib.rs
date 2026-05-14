@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod canon;
 pub mod config;
 pub mod db;

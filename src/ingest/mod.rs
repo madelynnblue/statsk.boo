@@ -1,6 +1,7 @@
 pub mod drive;
 pub mod parse;
 
+use crate::cache::Cache;
 use crate::canon::{canonicalize_league, canonicalize_team};
 use crate::config::Config;
 use crate::models::GameData;
@@ -96,7 +97,7 @@ impl FileSource {
     }
 }
 
-pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
+pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>, cache: Arc<Cache>) {
     info!("ingest loop starting");
     let source = Arc::new(if let Some(ref dir) = cfg.ingest_dir {
         let root = PathBuf::from(dir);
@@ -123,20 +124,30 @@ pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
     let tx_sem = Arc::new(tokio::sync::Semaphore::new(1));
 
     match reingest_stale(pool.clone(), source.clone(), tx_sem.clone()).await {
-        Ok(n) if n > 0 => info!("re-ingested {n} stale game(s)"),
+        Ok(n) if n > 0 => {
+            info!("re-ingested {n} stale game(s)");
+            cache.clear();
+        }
         Err(e) => error!("re-ingest of stale games failed: {e:#}"),
         _ => {}
     }
 
     match reconcile_missing(&cfg, pool.clone(), source.clone(), tx_sem.clone()).await {
-        Ok(n) if n > 0 => info!("reconciled {n} missing game(s)"),
+        Ok(n) if n > 0 => {
+            info!("reconciled {n} missing game(s)");
+            cache.clear();
+        }
         Err(e) => error!("reconciliation failed: {e:#}"),
         _ => {}
     }
 
     loop {
-        if let Err(e) = run_ingest(&cfg, pool.clone(), source.clone(), tx_sem.clone()).await {
-            error!("ingest run failed: {e:#}");
+        match run_ingest(&cfg, pool.clone(), source.clone(), tx_sem.clone()).await {
+            Ok(n) if n > 0 => {
+                cache.clear();
+            }
+            Ok(_) => {}
+            Err(e) => error!("ingest run failed: {e:#}"),
         }
         tokio::time::sleep(cfg.ingest_interval).await;
     }
@@ -147,7 +158,7 @@ async fn run_ingest(
     pool: Arc<PgPool>,
     source: Arc<FileSource>,
     tx_sem: Arc<tokio::sync::Semaphore>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<usize> {
     let last_ingest = last_ingest_at(&pool).await?.unwrap_or(
         chrono::NaiveDate::from_ymd_opt(2023, 1, 1)
             .unwrap()
@@ -224,7 +235,7 @@ async fn run_ingest(
     if ingested > 0 {
         info!("ingested {ingested} new game(s)");
     }
-    Ok(())
+    Ok(ingested)
 }
 
 async fn last_ingest_at(pool: &PgPool) -> anyhow::Result<Option<chrono::DateTime<chrono::Utc>>> {

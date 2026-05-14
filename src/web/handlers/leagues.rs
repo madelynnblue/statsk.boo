@@ -69,11 +69,10 @@ fn group_leagues(rows: Vec<RawRow>) -> Vec<LeagueEntry> {
 }
 
 pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppError> {
-    let rows = sqlx::query!(
-        "SELECT league, league_canonical, team, team_canonical FROM game_sides"
-    )
-    .fetch_all(&*state.pool)
-    .await?;
+    let rows =
+        sqlx::query!("SELECT league, league_canonical, team, team_canonical FROM game_sides")
+            .fetch_all(&*state.pool)
+            .await?;
 
     let raw: Vec<RawRow> = rows
         .into_iter()

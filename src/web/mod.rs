@@ -1,6 +1,8 @@
+pub mod cache;
 pub mod error;
 pub mod handlers;
 
+use crate::cache::Cache;
 use crate::config::Config;
 use axum::{Router, routing::get};
 use minijinja::Environment;
@@ -11,11 +13,16 @@ use std::sync::Arc;
 pub struct AppState {
     pub pool: Arc<PgPool>,
     pub env: Arc<Environment<'static>>,
+    pub cache: Arc<Cache>,
 }
 
-pub async fn serve(cfg: Arc<Config>, pool: Arc<PgPool>) -> anyhow::Result<()> {
+pub async fn serve(cfg: Arc<Config>, pool: Arc<PgPool>, cache: Arc<Cache>) -> anyhow::Result<()> {
     let env = Arc::new(build_template_env());
-    let state = AppState { pool, env };
+    let state = AppState {
+        pool,
+        env,
+        cache: cache.clone(),
+    };
 
     let app = Router::new()
         .route("/", get(handlers::index::handle))
@@ -27,6 +34,10 @@ pub async fn serve(cfg: Arc<Config>, pool: Arc<PgPool>) -> anyhow::Result<()> {
         .route("/game/{canonical_id}", get(handlers::game::handle))
         .route("/about", get(handlers::about::handle))
         .route("/robots.txt", get(handlers::robots::handle))
+        .layer(axum::middleware::from_fn(move |req, next| {
+            let c = cache.clone();
+            async move { cache::middleware(req, next, c).await }
+        }))
         .with_state(state);
 
     let addr: std::net::SocketAddr = cfg.bind_addr.parse()?;
