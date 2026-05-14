@@ -4,5 +4,6 @@ pub mod index;
 pub mod league;
 pub mod leagues;
 pub mod player;
+pub mod robots;
 pub mod search;
 pub mod team;

@@ -26,6 +26,7 @@ pub async fn serve(cfg: Arc<Config>, pool: Arc<PgPool>) -> anyhow::Result<()> {
         .route("/leagues", get(handlers::leagues::handle))
         .route("/game/{canonical_id}", get(handlers::game::handle))
         .route("/about", get(handlers::about::handle))
+        .route("/robots.txt", get(handlers::robots::handle))
         .with_state(state);
 
     let addr: std::net::SocketAddr = cfg.bind_addr.parse()?;
@@ -54,6 +55,8 @@ fn build_template_env() -> Environment<'static> {
     env.add_template("game.html", include_str!("../../templates/game.html"))
         .unwrap();
     env.add_template("about.html", include_str!("../../templates/about.html"))
+        .unwrap();
+    env.add_template("robots.txt", include_str!("../../templates/robots.txt"))
         .unwrap();
     env
 }
