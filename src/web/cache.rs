@@ -1,5 +1,5 @@
 use crate::cache::{Cache, CachedEntry};
-use axum::http::{Method, StatusCode, header};
+use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::{body::Body, extract::Request, middleware::Next, response::Response};
 use std::sync::Arc;
 
@@ -17,10 +17,18 @@ pub async fn middleware(req: Request, next: Next, cache: Arc<Cache>) -> Response
     }
 
     let key = req.uri().to_string();
+    let accepts_br = client_accepts_brotli(&req);
 
     if let Some(entry) = cache.get(&key) {
-        if let Ok(body) = zstd::decode_all(entry.body.as_slice()) {
-            let mut resp = Response::new(Body::from(body));
+        if accepts_br {
+            let mut resp = Response::new(Body::from(entry.body.clone()));
+            *resp.headers_mut() = entry.headers.clone();
+            resp.headers_mut()
+                .insert(header::CONTENT_ENCODING, HeaderValue::from_static("br"));
+            return resp;
+        }
+        if let Ok(decompressed) = brotli_decompress(&entry.body) {
+            let mut resp = Response::new(Body::from(decompressed));
             *resp.headers_mut() = entry.headers.clone();
             return resp;
         }
@@ -36,7 +44,7 @@ pub async fn middleware(req: Request, next: Next, cache: Arc<Cache>) -> Response
     match axum::body::to_bytes(body, usize::MAX).await {
         Ok(bytes) => {
             if bytes.len() <= MAX_CACHEABLE_BODY_BYTES {
-                if let Ok(compressed) = zstd::encode_all(bytes.as_ref(), 3) {
+                if let Ok(compressed) = brotli_compress(&bytes) {
                     let mut store_headers = parts.headers.clone();
                     store_headers.remove(header::CONTENT_LENGTH);
                     store_headers.remove(header::TRANSFER_ENCODING);
@@ -60,6 +68,37 @@ pub async fn middleware(req: Request, next: Next, cache: Arc<Cache>) -> Response
                 .unwrap()
         }
     }
+}
+
+fn client_accepts_brotli(req: &Request) -> bool {
+    req.headers()
+        .get(header::ACCEPT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| {
+            s.split(',').any(|part| {
+                part.split(';')
+                    .next()
+                    .map(|enc| enc.trim() == "br")
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn brotli_compress(data: &[u8]) -> std::io::Result<Vec<u8>> {
+    let params = brotli::enc::BrotliEncoderParams {
+        quality: 5,
+        ..Default::default()
+    };
+    let mut output = Vec::new();
+    brotli::BrotliCompress(&mut &data[..], &mut output, &params)?;
+    Ok(output)
+}
+
+fn brotli_decompress(data: &[u8]) -> std::io::Result<Vec<u8>> {
+    let mut output = Vec::new();
+    brotli::BrotliDecompress(&mut &data[..], &mut output)?;
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -179,5 +218,67 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         assert!(cache.get("/").is_none(), "HEAD requests must not be cached");
+    }
+
+    #[tokio::test]
+    async fn br_client_gets_compressed_response() {
+        let cache = Arc::new(Cache::new());
+        let app = make_app(cache.clone());
+
+        // Populate cache with a plain GET (no Accept-Encoding)
+        app.clone()
+            .oneshot(Request::get("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert!(cache.get("/").is_some());
+
+        // br-capable client hits the cache — should receive compressed bytes
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header(header::ACCEPT_ENCODING, "gzip, deflate, br")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(header::CONTENT_ENCODING)
+                .and_then(|v| v.to_str().ok()),
+            Some("br"),
+        );
+    }
+
+    #[tokio::test]
+    async fn non_br_client_gets_decompressed_response() {
+        let cache = Arc::new(Cache::new());
+        let app = make_app(cache.clone());
+
+        // Populate cache
+        app.clone()
+            .oneshot(Request::get("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        // Non-br client — should receive raw bytes with no Content-Encoding
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header(header::ACCEPT_ENCODING, "gzip")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(resp.headers().get(header::CONTENT_ENCODING).is_none());
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(body.as_ref(), b"ok");
     }
 }
