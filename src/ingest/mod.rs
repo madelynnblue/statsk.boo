@@ -13,6 +13,7 @@ use futures::stream::FuturesOrdered;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info, warn};
@@ -79,6 +80,14 @@ impl FileSource {
         }
     }
 
+    /// For the Drive variant, lists all XLSX files in `folder_id`. For the Local variant, `folder_id` is ignored — all `.xlsx` files under the configured root are returned.
+    async fn list_all_xlsx(&self, folder_id: &str) -> anyhow::Result<Vec<DriveFile>> {
+        match self {
+            FileSource::Drive(c) => c.list_all_xlsx(folder_id).await,
+            FileSource::Local(s) => s.list_all_xlsx(),
+        }
+    }
+
     async fn read_file(&self, file_id: &str, mime_type: Option<&str>) -> anyhow::Result<Vec<u8>> {
         match self {
             FileSource::Drive(c) => c.download_file(file_id, mime_type).await,
@@ -116,6 +125,12 @@ pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>) {
     match reingest_stale(pool.clone(), source.clone(), tx_sem.clone()).await {
         Ok(n) if n > 0 => info!("re-ingested {n} stale game(s)"),
         Err(e) => error!("re-ingest of stale games failed: {e:#}"),
+        _ => {}
+    }
+
+    match reconcile_missing(&cfg, pool.clone(), source.clone(), tx_sem.clone()).await {
+        Ok(n) if n > 0 => info!("reconciled {n} missing game(s)"),
+        Err(e) => error!("reconciliation failed: {e:#}"),
         _ => {}
     }
 
@@ -611,6 +626,90 @@ fn is_retryable(e: &sqlx::Error) -> bool {
             || code.as_deref() == Some("CR000"); // crdb retry
     }
     false
+}
+
+// Startup-only pass for the Drive source: lists all files in the folder, diffs
+// against known DB IDs, and ingests any that were previously skipped (e.g. due
+// to a 4XX download error that caused the run_ingest cursor to advance past them).
+// For the Local source this is effectively a no-op — run_ingest already lists all
+// local files every poll (the `since` parameter is ignored for Local).
+async fn reconcile_missing(
+    cfg: &Config,
+    pool: Arc<PgPool>,
+    source: Arc<FileSource>,
+    tx_sem: Arc<tokio::sync::Semaphore>,
+) -> anyhow::Result<usize> {
+    let all_files = source.list_all_xlsx(&cfg.google_drive_folder_id).await?;
+
+    let known_ids: HashSet<String> = sqlx::query!("SELECT id FROM games")
+        .fetch_all(&*pool)
+        .await?
+        .into_iter()
+        .map(|r| r.id)
+        .collect();
+
+    let mut missing: Vec<DriveFile> = all_files
+        .into_iter()
+        .filter(|f| !known_ids.contains(&f.id))
+        .collect();
+
+    if missing.is_empty() {
+        return Ok(0);
+    }
+
+    let n = missing.len();
+    info!("found {n} file(s) missing from database, reconciling");
+
+    // oldest-first for readable log output; not load-bearing (no cursor here)
+    missing.sort_unstable_by(|a, b| a.modified_time.cmp(&b.modified_time));
+
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let prep_sem = Arc::new(tokio::sync::Semaphore::new(cores));
+
+    let mut ordered: FuturesOrdered<_> = missing
+        .into_iter()
+        .map(|file| {
+            let pool = pool.clone();
+            let source = source.clone();
+            let prep_sem = prep_sem.clone();
+            tokio::spawn(async move {
+                let _permit = prep_sem
+                    .acquire_owned()
+                    .await
+                    .expect("prep semaphore closed");
+                let name = file.name.clone();
+                let result = prepare_file(&pool, &source, &file).await;
+                (name, result)
+            })
+        })
+        .collect();
+
+    let mut ingested = 0;
+    let mut i = 0usize;
+    while let Some(join_result) = ordered.next().await {
+        i += 1;
+        let (name, prep_result) = match join_result {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("prepare task panicked ({i}/{n}): {e}");
+                continue;
+            }
+        };
+        match prep_result {
+            Err(e) => warn!("skipping {name}: {e:#}"),
+            Ok(None) => {}
+            Ok(Some(prep)) => match commit_file(&pool, &tx_sem, prep).await {
+                Ok(()) => {
+                    info!("reconciled ({i}/{n}) {name}");
+                    ingested += 1;
+                }
+                Err(e) => warn!("skipping {name}: {e:#}"),
+            },
+        }
+    }
+    Ok(ingested)
 }
 
 async fn reingest_stale(
