@@ -49,13 +49,18 @@ pub async fn middleware(req: Request, next: Next, cache: Arc<Cache>) -> Response
                     store_headers.remove(header::CONTENT_LENGTH);
                     store_headers.remove(header::TRANSFER_ENCODING);
                     store_headers.remove(header::CONTENT_ENCODING);
-                    cache.set(
-                        key,
-                        Arc::new(CachedEntry {
-                            headers: store_headers,
-                            body: compressed,
-                        }),
-                    );
+                    let entry = Arc::new(CachedEntry {
+                        headers: store_headers,
+                        body: compressed,
+                    });
+                    cache.set(key, entry.clone());
+                    if accepts_br {
+                        let mut resp = Response::new(Body::from(entry.body.clone()));
+                        *resp.headers_mut() = entry.headers.clone();
+                        resp.headers_mut()
+                            .insert(header::CONTENT_ENCODING, HeaderValue::from_static("br"));
+                        return resp;
+                    }
                 }
             }
             Response::from_parts(parts, Body::from(bytes))
@@ -221,7 +226,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn br_client_gets_compressed_response() {
+    async fn br_client_gets_compressed_response_on_miss() {
+        let cache = Arc::new(Cache::new());
+        let app = make_app(cache.clone());
+
+        // Cold cache — first request with br gets compressed bytes directly
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header(header::ACCEPT_ENCODING, "gzip, deflate, br")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(header::CONTENT_ENCODING)
+                .and_then(|v| v.to_str().ok()),
+            Some("br"),
+        );
+    }
+
+    #[tokio::test]
+    async fn br_client_gets_compressed_response_on_hit() {
         let cache = Arc::new(Cache::new());
         let app = make_app(cache.clone());
 
@@ -232,7 +262,7 @@ mod tests {
             .unwrap();
         assert!(cache.get("/").is_some());
 
-        // br-capable client hits the cache — should receive compressed bytes
+        // br-capable client hits the warm cache
         let resp = app
             .oneshot(
                 Request::builder()
