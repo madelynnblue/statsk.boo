@@ -9,7 +9,9 @@
       "Bash(python3 -)",
       "Bash(python3 -m pip install openpyxl -q)",
       "Bash(pip install *)",
-      "Bash(python3 -c \"import openpyxl; print\\('ok'\\)\")"
+      "Bash(python3 -c \"import openpyxl; print\\('ok'\\)\")",
+      "Bash(cargo build *)",
+      "Bash(cargo fmt *)"
     ]
   }
 }

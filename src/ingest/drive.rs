@@ -5,12 +5,17 @@ use reqwest::header;
 use serde::Deserialize;
 use std::path::Path;
 
+const SHEETS_MIME: &str = "application/vnd.google-apps.spreadsheet";
+const XLSX_MIME: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
 #[derive(Debug, Deserialize)]
 pub struct DriveFile {
     pub id: String,
     pub name: String,
     #[serde(rename = "modifiedTime")]
     pub modified_time: String,
+    #[serde(rename = "mimeType")]
+    pub mime_type: Option<String>,
 }
 
 impl DriveFile {
@@ -33,6 +38,7 @@ impl DriveFile {
             id,
             name,
             modified_time,
+            mime_type: None,
         })
     }
 }
@@ -141,7 +147,10 @@ impl DriveClient {
                 .query(&[
                     ("q", q),
                     ("key", api_key),
-                    ("fields", "nextPageToken,files(id,name,modifiedTime)"),
+                    (
+                        "fields",
+                        "nextPageToken,files(id,name,modifiedTime,mimeType)",
+                    ),
                     ("pageSize", "1000"),
                 ]);
             if let Some(token) = page_token {
@@ -159,22 +168,30 @@ impl DriveClient {
         .await
     }
 
-    pub async fn download_file(&self, file_id: &str) -> Result<Vec<u8>> {
+    pub async fn download_file(&self, file_id: &str, mime_type: Option<&str>) -> Result<Vec<u8>> {
         let file_id = file_id.to_string();
         let api_key = &self.api_key;
+        let is_sheets = mime_type == Some(SHEETS_MIME);
         with_retry(|| async {
-            let resp = self
-                .client
-                .get(format!(
-                    "https://www.googleapis.com/drive/v3/files/{file_id}"
-                ))
-                .query(&[("alt", "media"), ("key", api_key)])
+            let req = if is_sheets {
+                self.client
+                    .get(format!(
+                        "https://www.googleapis.com/drive/v3/files/{file_id}/export"
+                    ))
+                    .query(&[("mimeType", XLSX_MIME), ("key", api_key)])
+            } else {
+                self.client
+                    .get(format!(
+                        "https://www.googleapis.com/drive/v3/files/{file_id}"
+                    ))
+                    .query(&[("alt", "media"), ("key", api_key)])
+            };
+            let bytes = req
                 .send()
                 .await
                 .map_err(|e| format!("network error: {e}"))?
                 .error_for_status()
-                .map_err(|e| format!("HTTP error: {e}"))?;
-            let bytes = resp
+                .map_err(|e| format!("HTTP error: {e}"))?
                 .bytes()
                 .await
                 .map_err(|e| format!("body read error: {e}"))?;

@@ -79,9 +79,9 @@ impl FileSource {
         }
     }
 
-    async fn read_file(&self, file_id: &str) -> anyhow::Result<Vec<u8>> {
+    async fn read_file(&self, file_id: &str, mime_type: Option<&str>) -> anyhow::Result<Vec<u8>> {
         match self {
-            FileSource::Drive(c) => c.download_file(file_id).await,
+            FileSource::Drive(c) => c.download_file(file_id, mime_type).await,
             FileSource::Local(s) => s.read_file(file_id),
         }
     }
@@ -252,7 +252,9 @@ async fn prepare_file(
         return Ok(None);
     }
 
-    let bytes = source.read_file(&file.id).await?;
+    let bytes = source
+        .read_file(&file.id, file.mime_type.as_deref())
+        .await?;
     let (game, date) = parse::parse_statsbook_with_date(&bytes)
         .map_err(|e| anyhow::anyhow!("parse error in {}: {e:#}", file.name))?;
 
@@ -513,7 +515,7 @@ async fn insert_parsed_file(
     tx_sem: &tokio::sync::Semaphore,
     file_exists: bool,
 ) -> anyhow::Result<()> {
-    let bytes = source.read_file(file_id).await?;
+    let bytes = source.read_file(file_id, None).await?;
     let (game, date) = parse::parse_statsbook_with_date(&bytes)
         .map_err(|e| anyhow::anyhow!("parse error in {file_name}: {e:#}"))?;
 
