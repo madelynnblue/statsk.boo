@@ -1,4 +1,4 @@
-# WSB — WFTDA Statsbook Browser
+# statsk.boo — WFTDA StatsBook Browser
 
 A web application that downloads WFTDA statsbook `.xlsx` files from Google Drive, parses them, and serves searchable player, team, league, and game pages.
 

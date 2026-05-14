@@ -36,7 +36,7 @@ This updates the `.sqlx/` directory. Commit the result alongside the query chang
 
 ## Architecture
 
-WSB (WFTDA Statsbook Browser) downloads WFTDA statsbook `.xlsx` files from a public Google Drive folder, parses them, stores the data in CockroachDB as JSONB, and serves searchable player/team/game pages.
+statsk.boo (WFTDA StatsBook Browser) downloads WFTDA statsbook `.xlsx` files from a public Google Drive folder, parses them, stores the data in CockroachDB as JSONB, and serves searchable player/team/game pages.
 
 **Runtime model:** Single Tokio binary. `main.rs` spawns a background ingest loop (`wsb::ingest::ingest_loop`) that polls Google Drive on a configurable interval, then starts the Axum web server. Both share `Arc<PgPool>` and `Arc<Config>`.
 
