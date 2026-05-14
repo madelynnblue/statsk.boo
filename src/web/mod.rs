@@ -23,6 +23,7 @@ pub async fn serve(cfg: Arc<Config>, pool: Arc<PgPool>) -> anyhow::Result<()> {
         .route("/player", get(handlers::player::handle))
         .route("/team", get(handlers::team::handle))
         .route("/league", get(handlers::league::handle))
+        .route("/leagues", get(handlers::leagues::handle))
         .route("/game/{canonical_id}", get(handlers::game::handle))
         .route("/about", get(handlers::about::handle))
         .with_state(state);
@@ -47,6 +48,8 @@ fn build_template_env() -> Environment<'static> {
     env.add_template("team.html", include_str!("../../templates/team.html"))
         .unwrap();
     env.add_template("league.html", include_str!("../../templates/league.html"))
+        .unwrap();
+    env.add_template("leagues.html", include_str!("../../templates/leagues.html"))
         .unwrap();
     env.add_template("game.html", include_str!("../../templates/game.html"))
         .unwrap();

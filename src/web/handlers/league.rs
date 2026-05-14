@@ -46,11 +46,10 @@ pub async fn handle(
     }
     let mut teams: Vec<TeamEntry> = groups
         .into_iter()
-        .filter_map(|(team_canonical, variants)| {
-            Some(TeamEntry {
-                team: best_name(variants.iter().map(|s| s.as_str()))?,
-                team_canonical,
-            })
+        .map(|(team_canonical, variants)| TeamEntry {
+            team: best_name(variants.iter().map(|s| s.as_str()))
+                .unwrap_or_else(|| team_canonical.clone()),
+            team_canonical,
         })
         .collect();
     teams.sort_by(|a, b| a.team_canonical.cmp(&b.team_canonical));

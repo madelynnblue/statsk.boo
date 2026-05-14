@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Leagues{% endblock %}
+{% block content %}
+<h1>Leagues</h1>
+
+{% if leagues %}
+{% for league in leagues %}
+<h2><a href="/league?league={{ league.league | urlencode }}">{{ league.league }}</a></h2>
+{% if league.teams %}
+<ul>
+{% for team in league.teams %}
+  <li><a href="/team?league={{ league.league | urlencode }}&team={{ team.team | urlencode }}">{{ team.team }}</a></li>
+{% endfor %}
+</ul>
+{% else %}
+<p>No teams found.</p>
+{% endif %}
+{% endfor %}
+{% else %}
+<p>No leagues found.</p>
+{% endif %}
+{% endblock %}
