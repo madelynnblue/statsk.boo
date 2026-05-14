@@ -39,7 +39,12 @@
   </style>
 </head>
 <body>
-  <header><a href="/">statsk.boo — WFTDA Statsbook Browser</a></header>
+  <header>
+    <a href="/">statsk.boo — WFTDA Statsbook Browser</a>
+    <nav style="display:inline; margin-left:1rem;">
+      <a href="/about" style="font-size:0.9rem; color:var(--muted); text-decoration:none;">About</a>
+    </nav>
+  </header>
   {% block content %}{% endblock %}
 </body>
 </html>
