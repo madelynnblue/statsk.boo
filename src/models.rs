@@ -1,5 +1,31 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Side {
+    #[serde(rename = "home")]
+    Home,
+    #[serde(rename = "away")]
+    Away,
+}
+
+impl Side {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Side::Home => "home",
+            Side::Away => "away",
+        }
+    }
+}
+
+/// Per-player jam position counts computed from lineups.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct JamCounts {
+    pub jammer: u8,
+    pub pivot: u8,
+    pub blocker: u8,
+    pub total: u8,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GameData {
     pub version: String,
@@ -139,6 +165,15 @@ pub struct Jam {
     pub away: JamSide,
 }
 
+impl Jam {
+    pub fn side(&self, side: Side) -> &JamSide {
+        match side {
+            Side::Home => &self.home,
+            Side::Away => &self.away,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct JamSide {
     pub jammer: Option<String>,
@@ -170,26 +205,15 @@ pub struct Penalty {
     pub expulsion: bool,
 }
 
-impl GameData {
-    pub fn total_score(&self, side: &str) -> i16 {
-        if side == "home" {
-            self.home_score
-        } else {
-            self.away_score
-        }
-    }
-}
+impl GameData {}
 
-pub fn periods_score(periods: &[Period], side: &str) -> i16 {
+pub fn periods_score(periods: &[Period], side: Side) -> i16 {
     periods
         .iter()
         .flat_map(|p| &p.jams)
-        .map(|j| {
-            if side == "home" {
-                j.home.score
-            } else {
-                j.away.score
-            }
+        .map(|j| match side {
+            Side::Home => j.home.score,
+            Side::Away => j.away.score,
         })
         .sum()
 }
@@ -279,7 +303,7 @@ mod tests {
     #[test]
     fn test_total_score() {
         let game = sample_game();
-        assert_eq!(game.total_score("home"), 4);
-        assert_eq!(game.total_score("away"), 0);
+        assert_eq!(game.home_score, 4);
+        assert_eq!(game.away_score, 0);
     }
 }

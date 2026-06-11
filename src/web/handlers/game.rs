@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::models::{GameData, Penalty};
+use crate::models::{GameData, Penalty, Side};
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Path, State};
 use axum::response::Html;
@@ -23,10 +23,10 @@ pub async fn handle(
 
     let home_score = game.home_score;
     let away_score = game.away_score;
-    let home_names = skater_name_map(&game, "home");
-    let away_names = skater_name_map(&game, "away");
-    let home_penalties = group_penalties(&game.penalties, "home", &home_names);
-    let away_penalties = group_penalties(&game.penalties, "away", &away_names);
+    let home_names = skater_name_map(&game, Side::Home);
+    let away_names = skater_name_map(&game, Side::Away);
+    let home_penalties = group_penalties(&game.penalties, Side::Home, &home_names);
+    let away_penalties = group_penalties(&game.penalties, Side::Away, &away_names);
 
     let tmpl = state.env.get_template("game.html")?;
     let html = tmpl.render(minijinja::context! {
@@ -63,11 +63,11 @@ struct PenaltyItem {
 
 fn group_penalties(
     penalties: &[Penalty],
-    side: &str,
+    side: Side,
     names: &HashMap<String, String>,
 ) -> Vec<PlayerPenalties> {
     let mut groups: HashMap<String, Vec<&Penalty>> = HashMap::new();
-    for p in penalties.iter().filter(|p| p.side == side) {
+    for p in penalties.iter().filter(|p| p.side == side.as_str()) {
         groups.entry(p.number.clone()).or_default().push(p);
     }
     let mut result: Vec<PlayerPenalties> = groups
@@ -100,11 +100,10 @@ fn group_penalties(
     result
 }
 
-fn skater_name_map(game: &GameData, side: &str) -> HashMap<String, String> {
+fn skater_name_map(game: &GameData, side: Side) -> HashMap<String, String> {
     let skaters = match side {
-        "home" => &game.home.skaters,
-        "away" => &game.away.skaters,
-        _ => unreachable!(),
+        Side::Home => &game.home.skaters,
+        Side::Away => &game.away.skaters,
     };
     skaters
         .iter()

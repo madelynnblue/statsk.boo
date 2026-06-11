@@ -67,6 +67,19 @@ const FIXTURES: &[Fixture] = &[
         summary_players: (15, 10),
         scores: (198, 97),
     },
+    // Regression test for formula-evaluated Game Summary (this statsbook's
+    // Game Summary formulas were not cached — calamine saw zeros everywhere).
+    // Formualizer evaluates the SUMPRODUCT/LU/SK formulas and recovers all
+    // 15 players per side with correct jam counts.
+    Fixture {
+        path: "standbys-flatiron.xlsx",
+        period_count: 2,
+        jam_counts: &[26, 23],
+        star_pass_counts: &[4, 3],
+        penalties: 70,
+        summary_players: (15, 15),
+        scores: (202, 88),
+    },
 ];
 
 fn parse_fixture(path: &str) -> GameData {
@@ -93,18 +106,8 @@ fn test_fixture_corpus() {
         );
 
         // Scores
-        assert_eq!(
-            game.total_score("home"),
-            f.scores.0,
-            "{}: home score",
-            f.path
-        );
-        assert_eq!(
-            game.total_score("away"),
-            f.scores.1,
-            "{}: away score",
-            f.path
-        );
+        assert_eq!(game.home_score, f.scores.0, "{}: home score", f.path);
+        assert_eq!(game.away_score, f.scores.1, "{}: away score", f.path);
 
         // Periods and jams (these catch regressions in star pass / SP row parsing)
         assert_eq!(

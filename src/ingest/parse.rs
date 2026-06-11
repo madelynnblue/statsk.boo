@@ -1,12 +1,16 @@
 use crate::models::*;
 use anyhow::{Context, Result};
 use calamine::{Data, DataType, Range, Reader, Xlsx, open_workbook_from_rs};
-use std::collections::HashSet;
+use formualizer_common::LiteralValue;
+use formualizer_workbook::{
+    LoadStrategy, SpreadsheetReader, Workbook, WorkbookConfig, backends::CalamineAdapter,
+};
+use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 12;
+pub const PARSER_VERSION: i64 = 13;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes)?;
@@ -24,18 +28,34 @@ pub fn parse_statsbook_with_date(bytes: &[u8]) -> Result<(GameData, Option<chron
     let mut away = parse_team(&mut wb, 8, 9, 13, 20)?;
     let mut periods = parse_scores(&mut wb)?;
     merge_lineups(&mut wb, &mut periods)?;
-    let home_players = players_in_jams(&periods, "home");
-    let away_players = players_in_jams(&periods, "away");
+    let home_players = players_in_jams(&periods, Side::Home);
+    let away_players = players_in_jams(&periods, Side::Away);
     home.skaters.retain(|s| home_players.contains(&s.number));
     away.skaters.retain(|s| away_players.contains(&s.number));
     let igrf = read_igrf_cells(&mut wb)?;
     let penalties = parse_penalties(&mut wb, &igrf)?;
-    let game_summary = parse_game_summary(&mut wb, &igrf).ok();
+    let home_jam_counts = compute_jam_counts(&periods, Side::Home);
+    let away_jam_counts = compute_jam_counts(&periods, Side::Away);
+
+    // Try formualizer first for fully-evaluated Game Summary; fall back to calamine
+    // with computed jam counts if formualizer fails.
+    let game_summary =
+        parse_game_summary_formualizer(bytes, &home_players, &away_players).or_else(|| {
+            parse_game_summary(
+                &mut wb,
+                &igrf,
+                &home_players,
+                &away_players,
+                &home_jam_counts,
+                &away_jam_counts,
+            )
+            .ok()
+        });
 
     let (home_score, away_score) = parse_igrf_scores(&mut wb).unwrap_or_else(|| {
         (
-            periods_score(&periods, "home"),
-            periods_score(&periods, "away"),
+            periods_score(&periods, Side::Home),
+            periods_score(&periods, Side::Away),
         )
     });
     let game = GameData {
@@ -59,11 +79,11 @@ fn is_zero_jam_player(number: &str) -> bool {
     number.ends_with('*')
 }
 
-fn players_in_jams(periods: &[Period], side: &str) -> HashSet<String> {
+fn players_in_jams(periods: &[Period], side: Side) -> HashSet<String> {
     let mut numbers = HashSet::new();
     for period in periods {
         for jam in &period.jams {
-            let js = if side == "home" { &jam.home } else { &jam.away };
+            let js = jam.side(side);
             if let Some(ref n) = js.jammer {
                 numbers.insert(n.clone());
             }
@@ -76,6 +96,27 @@ fn players_in_jams(periods: &[Period], side: &str) -> HashSet<String> {
         }
     }
     numbers
+}
+
+/// Count how many jams each player played as jammer, pivot, and blocker.
+fn compute_jam_counts(periods: &[Period], side: Side) -> HashMap<String, JamCounts> {
+    let mut counts: HashMap<String, JamCounts> = HashMap::new();
+    for period in periods {
+        for jam in &period.jams {
+            let js = jam.side(side);
+            for entry in &js.lineup {
+                let e = counts.entry(entry.number.clone()).or_default();
+                match entry.position.as_str() {
+                    "jammer" => e.jammer += 1,
+                    "pivot" => e.pivot += 1,
+                    "blocker" => e.blocker += 1,
+                    _ => {}
+                }
+                e.total += 1;
+            }
+        }
+    }
+    counts
 }
 
 fn cell_str(r: &Range<Data>, row: u32, col: u32) -> Option<String> {
@@ -501,19 +542,206 @@ fn parse_penalties_sheet<R: std::io::Read + std::io::Seek>(
     Ok(penalties)
 }
 
+/// Load the statsbook through formualizer to get fully-evaluated Game Summary
+/// cells (formualizer evaluates Excel formulas that calamine only sees as cached
+/// zeroes). Falls back to `None` on any error so callers can use the calamine path.
+fn parse_game_summary_formualizer(
+    bytes: &[u8],
+    home_numbers: &HashSet<String>,
+    away_numbers: &HashSet<String>,
+) -> Option<GameSummary> {
+    let adapter = CalamineAdapter::open_bytes(bytes.to_vec()).ok()?;
+    let cfg = WorkbookConfig::ephemeral();
+    let mut wb = Workbook::from_reader(adapter, LoadStrategy::EagerAll, cfg).ok()?;
+    wb.evaluate_all().ok()?;
+
+    let home_players: Vec<SummaryPlayer> = (6u32..=25)
+        .filter_map(|row| read_summary_player(&wb, row))
+        .filter(|p| !is_zero_jam_player(&p.number) && home_numbers.contains(&p.number))
+        .collect();
+    let away_players: Vec<SummaryPlayer> = (28u32..=47)
+        .filter_map(|row| read_summary_player(&wb, row))
+        .filter(|p| !is_zero_jam_player(&p.number) && away_numbers.contains(&p.number))
+        .collect();
+
+    Some(GameSummary {
+        home_totals: read_summary_totals(&wb, 26),
+        away_totals: read_summary_totals(&wb, 48),
+        home_players,
+        away_players,
+    })
+}
+
+fn read_summary_player(wb: &Workbook, row: u32) -> Option<SummaryPlayer> {
+    let number = lv_string(wb.get_value("Game Summary", row, 1))?;
+    let name = lv_string(wb.get_value("Game Summary", row, 2)).unwrap_or_default();
+    let summary = SummaryPlayer {
+        number,
+        name,
+        jams_jammer: lv_u8(wb.get_value("Game Summary", row, 3)),
+        jams_pivot: lv_u8(wb.get_value("Game Summary", row, 4)),
+        jams_blocker: lv_u8(wb.get_value("Game Summary", row, 5)),
+        jams_total: lv_u8(wb.get_value("Game Summary", row, 6)),
+        jams_pct: lv_f32(wb.get_value("Game Summary", row, 7)),
+        jammer_points: lv_i16(wb.get_value("Game Summary", row, 8)),
+        ppj: lv_f32(wb.get_value("Game Summary", row, 9)),
+        lost: lv_u8(wb.get_value("Game Summary", row, 10)),
+        lead: lv_u8(wb.get_value("Game Summary", row, 11)),
+        called: lv_u8(wb.get_value("Game Summary", row, 12)),
+        no_initial_trip: lv_u8(wb.get_value("Game Summary", row, 13)),
+        star_passes: lv_u8(wb.get_value("Game Summary", row, 14)),
+        lead_pct: lv_f32(wb.get_value("Game Summary", row, 15)),
+        lead_plus_minus: lv_i16(wb.get_value("Game Summary", row, 16)),
+        avg_lead_plus_minus: lv_f32(wb.get_value("Game Summary", row, 17)),
+        pts_for: lv_i16(wb.get_value("Game Summary", row, 18)),
+        pts_against: lv_i16(wb.get_value("Game Summary", row, 19)),
+        plus_minus: lv_i16(wb.get_value("Game Summary", row, 20)),
+        jammer_plus_minus: lv_i16(wb.get_value("Game Summary", row, 21)),
+        avg_jammer_plus_minus: lv_f32(wb.get_value("Game Summary", row, 22)),
+        pivot_plus_minus: lv_i16(wb.get_value("Game Summary", row, 23)),
+        avg_pivot_plus_minus: lv_f32(wb.get_value("Game Summary", row, 24)),
+        block_plus_minus: lv_i16(wb.get_value("Game Summary", row, 25)),
+        avg_block_plus_minus: lv_f32(wb.get_value("Game Summary", row, 26)),
+        pack_plus_minus: lv_i16(wb.get_value("Game Summary", row, 27)),
+        avg_pack_plus_minus: lv_f32(wb.get_value("Game Summary", row, 28)),
+        avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 29)),
+        vtar_pts_for: lv_f32(wb.get_value("Game Summary", row, 30)),
+        vtar_pts_against: lv_f32(wb.get_value("Game Summary", row, 31)),
+        vtar_total_plus_minus: lv_f32(wb.get_value("Game Summary", row, 32)),
+        vtar_jammer_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 33)),
+        vtar_pivot_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 34)),
+        vtar_blocker_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 35)),
+        vtar_pack_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 36)),
+        total_vtar_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 37)),
+        penalty_count: lv_u8(wb.get_value("Game Summary", row, 38)),
+    };
+    if summary.jams_total == Some(0) {
+        return None;
+    }
+    Some(summary)
+}
+
+fn read_summary_totals(wb: &Workbook, row: u32) -> SummaryTotals {
+    SummaryTotals {
+        jams_jammer: lv_u8(wb.get_value("Game Summary", row, 3)),
+        jams_pivot: lv_u8(wb.get_value("Game Summary", row, 4)),
+        jams_blocker: lv_u8(wb.get_value("Game Summary", row, 5)),
+        jams_total: lv_u16(wb.get_value("Game Summary", row, 6)),
+        jams_pct: lv_f32(wb.get_value("Game Summary", row, 7)),
+        jammer_points: lv_i16(wb.get_value("Game Summary", row, 8)),
+        ppj: lv_f32(wb.get_value("Game Summary", row, 9)),
+        lost: lv_u8(wb.get_value("Game Summary", row, 10)),
+        lead: lv_u8(wb.get_value("Game Summary", row, 11)),
+        called: lv_u8(wb.get_value("Game Summary", row, 12)),
+        no_initial_trip: lv_u8(wb.get_value("Game Summary", row, 13)),
+        star_passes: lv_u8(wb.get_value("Game Summary", row, 14)),
+        lead_pct: lv_f32(wb.get_value("Game Summary", row, 15)),
+        lead_plus_minus: lv_i16(wb.get_value("Game Summary", row, 16)),
+        avg_lead_plus_minus: lv_f32(wb.get_value("Game Summary", row, 17)),
+        pts_for: lv_f32(wb.get_value("Game Summary", row, 18)),
+        pts_against: lv_f32(wb.get_value("Game Summary", row, 19)),
+        plus_minus: lv_f32(wb.get_value("Game Summary", row, 20)),
+        jammer_plus_minus: lv_f32(wb.get_value("Game Summary", row, 21)),
+        avg_jammer_plus_minus: lv_f32(wb.get_value("Game Summary", row, 22)),
+        pivot_plus_minus: lv_f32(wb.get_value("Game Summary", row, 23)),
+        avg_pivot_plus_minus: lv_f32(wb.get_value("Game Summary", row, 24)),
+        block_plus_minus: lv_f32(wb.get_value("Game Summary", row, 25)),
+        avg_block_plus_minus: lv_f32(wb.get_value("Game Summary", row, 26)),
+        pack_plus_minus: lv_f32(wb.get_value("Game Summary", row, 27)),
+        avg_pack_plus_minus: lv_f32(wb.get_value("Game Summary", row, 28)),
+        avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 29)),
+        vtar_pts_for: lv_f32(wb.get_value("Game Summary", row, 30)),
+        vtar_pts_against: lv_f32(wb.get_value("Game Summary", row, 31)),
+        vtar_total_plus_minus: lv_f32(wb.get_value("Game Summary", row, 32)),
+        vtar_jammer_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 33)),
+        vtar_pivot_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 34)),
+        vtar_blocker_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 35)),
+        vtar_pack_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 36)),
+        total_vtar_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 37)),
+        penalty_count: lv_u8(wb.get_value("Game Summary", row, 38)),
+    }
+}
+
+/// Convert a LiteralValue to an optional string.
+fn lv_string(v: Option<LiteralValue>) -> Option<String> {
+    match v? {
+        LiteralValue::Text(s) => {
+            let t = s.trim();
+            if t.is_empty() || t.eq_ignore_ascii_case("none") {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        }
+        LiteralValue::Number(n) if n.is_finite() => {
+            if n.fract() == 0.0 {
+                Some((n as i64).to_string())
+            } else {
+                Some(n.to_string())
+            }
+        }
+        LiteralValue::Int(i) => Some(i.to_string()),
+        _ => None,
+    }
+}
+
+fn lv_u8(v: Option<LiteralValue>) -> Option<u8> {
+    match v? {
+        LiteralValue::Number(n) if n.is_finite() => Some((n.round() as i64).clamp(0, 255) as u8),
+        LiteralValue::Int(i) => Some(i.clamp(0, 255) as u8),
+        LiteralValue::Text(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn lv_u16(v: Option<LiteralValue>) -> Option<u16> {
+    match v? {
+        LiteralValue::Number(n) if n.is_finite() => Some((n.round() as i64).clamp(0, 65535) as u16),
+        LiteralValue::Int(i) => Some(i.clamp(0, 65535) as u16),
+        LiteralValue::Text(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn lv_i16(v: Option<LiteralValue>) -> Option<i16> {
+    match v? {
+        LiteralValue::Number(n) if n.is_finite() => {
+            Some((n.round() as i64).clamp(i16::MIN as i64, i16::MAX as i64) as i16)
+        }
+        LiteralValue::Int(i) => Some(i.clamp(i16::MIN as i64, i16::MAX as i64) as i16),
+        LiteralValue::Text(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn lv_f32(v: Option<LiteralValue>) -> Option<f32> {
+    match v? {
+        LiteralValue::Number(n) if n.is_finite() => Some(n as f32),
+        LiteralValue::Int(i) => Some(i as f32),
+        LiteralValue::Text(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
 fn parse_game_summary<R: std::io::Read + std::io::Seek>(
     wb: &mut Xlsx<R>,
     igrf: &IgrfCells,
+    home_numbers: &HashSet<String>,
+    away_numbers: &HashSet<String>,
+    home_jam_counts: &HashMap<String, JamCounts>,
+    away_jam_counts: &HashMap<String, JamCounts>,
 ) -> Result<GameSummary> {
     let sheet = wb
         .worksheet_range("Game Summary")
         .context("no Game Summary sheet")?;
     let formulas = wb.worksheet_formula("Game Summary").ok();
-    let home_players = (5u32..=24)
-        .filter_map(|row| parse_summary_player(&sheet, &formulas, row, igrf))
+    let home_players: Vec<SummaryPlayer> = (5u32..=24)
+        .filter_map(|row| parse_summary_player(&sheet, &formulas, row, igrf, home_jam_counts))
+        .filter(|p| home_numbers.contains(&p.number))
         .collect();
-    let away_players = (27u32..=46)
-        .filter_map(|row| parse_summary_player(&sheet, &formulas, row, igrf))
+    let away_players: Vec<SummaryPlayer> = (27u32..=46)
+        .filter_map(|row| parse_summary_player(&sheet, &formulas, row, igrf, away_jam_counts))
+        .filter(|p| away_numbers.contains(&p.number))
         .collect();
     Ok(GameSummary {
         home_totals: parse_summary_totals(&sheet, 25),
@@ -528,19 +756,39 @@ fn parse_summary_player(
     formulas: &Option<Range<String>>,
     row: u32,
     igrf: &IgrfCells,
+    jam_counts: &HashMap<String, JamCounts>,
 ) -> Option<SummaryPlayer> {
     let number = cell_str_with_formula(sheet, formulas, row, 0, igrf)?;
     if is_zero_jam_player(&number) {
         return None;
     }
     let name = cell_str_with_formula(sheet, formulas, row, 1, igrf).unwrap_or_default();
+    let jc = jam_counts.get(&number).copied().unwrap_or_default();
+    let sheet_total = cell_opt_u8(sheet, row, 5);
+    let use_computed = sheet_total.unwrap_or(0) == 0 && jc.total > 0;
     let summary = SummaryPlayer {
         number,
         name,
-        jams_jammer: cell_opt_u8(sheet, row, 2),
-        jams_pivot: cell_opt_u8(sheet, row, 3),
-        jams_blocker: cell_opt_u8(sheet, row, 4),
-        jams_total: cell_opt_u8(sheet, row, 5),
+        jams_jammer: if use_computed {
+            Some(jc.jammer)
+        } else {
+            cell_opt_u8(sheet, row, 2)
+        },
+        jams_pivot: if use_computed {
+            Some(jc.pivot)
+        } else {
+            cell_opt_u8(sheet, row, 3)
+        },
+        jams_blocker: if use_computed {
+            Some(jc.blocker)
+        } else {
+            cell_opt_u8(sheet, row, 4)
+        },
+        jams_total: if use_computed {
+            Some(jc.total)
+        } else {
+            sheet_total
+        },
         jams_pct: cell_opt_f32(sheet, row, 6),
         jammer_points: cell_opt_i16(sheet, row, 7),
         ppj: cell_opt_f32(sheet, row, 8),
