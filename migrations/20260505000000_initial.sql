@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS games (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS games_canonical_id_idx   ON games (canonical_id) STORING (modified_time);
+CREATE        INDEX IF NOT EXISTS games_parser_version_idx ON games (parser_version) STORING (source, modified_time);
+CREATE        INDEX IF NOT EXISTS games_modified_time_idx  ON games (modified_time DESC);
 CREATE        INDEX IF NOT EXISTS games_date_ingested_idx  ON games (date DESC, ingested_at DESC) STORING (canonical_id, home_score, away_score);
 CREATE INVERTED INDEX IF NOT EXISTS games_tournament_idx  ON games (tournament  gin_trgm_ops);
 CREATE INVERTED INDEX IF NOT EXISTS games_venue_name_idx  ON games (venue_name  gin_trgm_ops);
