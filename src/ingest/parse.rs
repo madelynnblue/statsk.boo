@@ -10,7 +10,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 13;
+pub const PARSER_VERSION: i64 = 14;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes)?;
@@ -39,18 +39,23 @@ pub fn parse_statsbook_with_date(bytes: &[u8]) -> Result<(GameData, Option<chron
 
     // Try formualizer first for fully-evaluated Game Summary; fall back to calamine
     // with computed jam counts if formualizer fails.
+    // Read calamine GS sheet for error-fallback (formualizer sometimes returns
+    // Error on cells whose calamine-cached value is usable).
+    let gs_cached = wb.worksheet_range("Game Summary").ok();
+
     let game_summary =
-        parse_game_summary_formualizer(bytes, &home_players, &away_players).or_else(|| {
-            parse_game_summary(
-                &mut wb,
-                &igrf,
-                &home_players,
-                &away_players,
-                &home_jam_counts,
-                &away_jam_counts,
-            )
-            .ok()
-        });
+        parse_game_summary_formualizer(bytes, &home_players, &away_players, gs_cached.as_ref())
+            .or_else(|| {
+                parse_game_summary(
+                    &mut wb,
+                    &igrf,
+                    &home_players,
+                    &away_players,
+                    &home_jam_counts,
+                    &away_jam_counts,
+                )
+                .ok()
+            });
 
     let (home_score, away_score) = parse_igrf_scores(&mut wb).unwrap_or_else(|| {
         (
@@ -549,6 +554,7 @@ fn parse_game_summary_formualizer(
     bytes: &[u8],
     home_numbers: &HashSet<String>,
     away_numbers: &HashSet<String>,
+    gs_cached: Option<&Range<Data>>,
 ) -> Option<GameSummary> {
     let adapter = CalamineAdapter::open_bytes(bytes.to_vec()).ok()?;
     let cfg = WorkbookConfig::ephemeral();
@@ -556,64 +562,87 @@ fn parse_game_summary_formualizer(
     wb.evaluate_all().ok()?;
 
     let home_players: Vec<SummaryPlayer> = (6u32..=25)
-        .filter_map(|row| read_summary_player(&wb, row))
+        .filter_map(|row| read_summary_player(&wb, gs_cached, row))
         .filter(|p| !is_zero_jam_player(&p.number) && home_numbers.contains(&p.number))
         .collect();
     let away_players: Vec<SummaryPlayer> = (28u32..=47)
-        .filter_map(|row| read_summary_player(&wb, row))
+        .filter_map(|row| read_summary_player(&wb, gs_cached, row))
         .filter(|p| !is_zero_jam_player(&p.number) && away_numbers.contains(&p.number))
         .collect();
 
     Some(GameSummary {
-        home_totals: read_summary_totals(&wb, 26),
-        away_totals: read_summary_totals(&wb, 48),
+        home_totals: read_summary_totals(&wb, gs_cached, 26),
+        away_totals: read_summary_totals(&wb, gs_cached, 48),
         home_players,
         away_players,
     })
 }
 
-fn read_summary_player(wb: &Workbook, row: u32) -> Option<SummaryPlayer> {
-    let number = lv_string(wb.get_value("Game Summary", row, 1))?;
-    let name = lv_string(wb.get_value("Game Summary", row, 2)).unwrap_or_default();
+/// Read a Game Summary cell from formualizer with calamine-cached fallback for errors.
+fn fv_val(wb: &Workbook, cached: Option<&Range<Data>>, row: u32, col: u32) -> Option<LiteralValue> {
+    match wb.get_value("Game Summary", row, col) {
+        Some(LiteralValue::Error(_)) => {
+            // Formualizer couldn't evaluate this formula — fall back to calamine cached.
+            let d = cached?.get_value((row - 1, col - 1))?;
+            Some(match d {
+                Data::String(s) => LiteralValue::Text(s.clone()),
+                Data::Float(f) => LiteralValue::Number(*f),
+                Data::Int(i) => LiteralValue::Int(*i),
+                Data::Bool(b) => LiteralValue::Boolean(*b),
+                Data::Empty => return None,
+                _ => return None,
+            })
+        }
+        other => other,
+    }
+}
+
+fn read_summary_player(
+    wb: &Workbook,
+    cached: Option<&Range<Data>>,
+    row: u32,
+) -> Option<SummaryPlayer> {
+    let number = lv_string(fv_val(wb, cached, row, 1))?;
+    let name = lv_string(fv_val(wb, cached, row, 2)).unwrap_or_default();
     let summary = SummaryPlayer {
         number,
         name,
-        jams_jammer: lv_u8(wb.get_value("Game Summary", row, 3)),
-        jams_pivot: lv_u8(wb.get_value("Game Summary", row, 4)),
-        jams_blocker: lv_u8(wb.get_value("Game Summary", row, 5)),
-        jams_total: lv_u8(wb.get_value("Game Summary", row, 6)),
-        jams_pct: lv_f32(wb.get_value("Game Summary", row, 7)),
-        jammer_points: lv_i16(wb.get_value("Game Summary", row, 8)),
-        ppj: lv_f32(wb.get_value("Game Summary", row, 9)),
-        lost: lv_u8(wb.get_value("Game Summary", row, 10)),
-        lead: lv_u8(wb.get_value("Game Summary", row, 11)),
-        called: lv_u8(wb.get_value("Game Summary", row, 12)),
-        no_initial_trip: lv_u8(wb.get_value("Game Summary", row, 13)),
-        star_passes: lv_u8(wb.get_value("Game Summary", row, 14)),
-        lead_pct: lv_f32(wb.get_value("Game Summary", row, 15)),
-        lead_plus_minus: lv_i16(wb.get_value("Game Summary", row, 16)),
-        avg_lead_plus_minus: lv_f32(wb.get_value("Game Summary", row, 17)),
-        pts_for: lv_i16(wb.get_value("Game Summary", row, 18)),
-        pts_against: lv_i16(wb.get_value("Game Summary", row, 19)),
-        plus_minus: lv_i16(wb.get_value("Game Summary", row, 20)),
-        jammer_plus_minus: lv_i16(wb.get_value("Game Summary", row, 21)),
-        avg_jammer_plus_minus: lv_f32(wb.get_value("Game Summary", row, 22)),
-        pivot_plus_minus: lv_i16(wb.get_value("Game Summary", row, 23)),
-        avg_pivot_plus_minus: lv_f32(wb.get_value("Game Summary", row, 24)),
-        block_plus_minus: lv_i16(wb.get_value("Game Summary", row, 25)),
-        avg_block_plus_minus: lv_f32(wb.get_value("Game Summary", row, 26)),
-        pack_plus_minus: lv_i16(wb.get_value("Game Summary", row, 27)),
-        avg_pack_plus_minus: lv_f32(wb.get_value("Game Summary", row, 28)),
-        avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 29)),
-        vtar_pts_for: lv_f32(wb.get_value("Game Summary", row, 30)),
-        vtar_pts_against: lv_f32(wb.get_value("Game Summary", row, 31)),
-        vtar_total_plus_minus: lv_f32(wb.get_value("Game Summary", row, 32)),
-        vtar_jammer_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 33)),
-        vtar_pivot_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 34)),
-        vtar_blocker_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 35)),
-        vtar_pack_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 36)),
-        total_vtar_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 37)),
-        penalty_count: lv_u8(wb.get_value("Game Summary", row, 38)),
+        jams_jammer: lv_u8(fv_val(wb, cached, row, 3)),
+        jams_pivot: lv_u8(fv_val(wb, cached, row, 4)),
+        jams_blocker: lv_u8(fv_val(wb, cached, row, 5)),
+        jams_total: lv_u8(fv_val(wb, cached, row, 6)),
+        jams_pct: lv_f32(fv_val(wb, cached, row, 7)),
+        jammer_points: lv_i16(fv_val(wb, cached, row, 8)),
+        ppj: lv_f32(fv_val(wb, cached, row, 9)),
+        lost: lv_u8(fv_val(wb, cached, row, 10)),
+        lead: lv_u8(fv_val(wb, cached, row, 11)),
+        called: lv_u8(fv_val(wb, cached, row, 12)),
+        no_initial_trip: lv_u8(fv_val(wb, cached, row, 13)),
+        star_passes: lv_u8(fv_val(wb, cached, row, 14)),
+        lead_pct: lv_f32(fv_val(wb, cached, row, 15)),
+        lead_plus_minus: lv_i16(fv_val(wb, cached, row, 16)),
+        avg_lead_plus_minus: lv_f32(fv_val(wb, cached, row, 17)),
+        pts_for: lv_i16(fv_val(wb, cached, row, 18)),
+        pts_against: lv_i16(fv_val(wb, cached, row, 19)),
+        plus_minus: lv_i16(fv_val(wb, cached, row, 20)),
+        jammer_plus_minus: lv_i16(fv_val(wb, cached, row, 21)),
+        avg_jammer_plus_minus: lv_f32(fv_val(wb, cached, row, 22)),
+        pivot_plus_minus: lv_i16(fv_val(wb, cached, row, 23)),
+        avg_pivot_plus_minus: lv_f32(fv_val(wb, cached, row, 24)),
+        block_plus_minus: lv_i16(fv_val(wb, cached, row, 25)),
+        avg_block_plus_minus: lv_f32(fv_val(wb, cached, row, 26)),
+        pack_plus_minus: lv_i16(fv_val(wb, cached, row, 27)),
+        avg_pack_plus_minus: lv_f32(fv_val(wb, cached, row, 28)),
+        avg_plus_minus: lv_f32(fv_val(wb, cached, row, 29)),
+        vtar_pts_for: lv_f32(fv_val(wb, cached, row, 30)),
+        vtar_pts_against: lv_f32(fv_val(wb, cached, row, 31)),
+        vtar_total_plus_minus: lv_f32(fv_val(wb, cached, row, 32)),
+        vtar_jammer_avg_plus_minus: lv_f32(fv_val(wb, cached, row, 33)),
+        vtar_pivot_avg_plus_minus: lv_f32(fv_val(wb, cached, row, 34)),
+        vtar_blocker_avg_plus_minus: lv_f32(fv_val(wb, cached, row, 35)),
+        vtar_pack_avg_plus_minus: lv_f32(fv_val(wb, cached, row, 36)),
+        total_vtar_avg_plus_minus: lv_f32(fv_val(wb, cached, row, 37)),
+        penalty_count: lv_u8(fv_val(wb, cached, row, 38)),
     };
     if summary.jams_total == Some(0) {
         return None;
@@ -621,44 +650,44 @@ fn read_summary_player(wb: &Workbook, row: u32) -> Option<SummaryPlayer> {
     Some(summary)
 }
 
-fn read_summary_totals(wb: &Workbook, row: u32) -> SummaryTotals {
+fn read_summary_totals(wb: &Workbook, cached: Option<&Range<Data>>, row: u32) -> SummaryTotals {
     SummaryTotals {
-        jams_jammer: lv_u8(wb.get_value("Game Summary", row, 3)),
-        jams_pivot: lv_u8(wb.get_value("Game Summary", row, 4)),
-        jams_blocker: lv_u8(wb.get_value("Game Summary", row, 5)),
-        jams_total: lv_u16(wb.get_value("Game Summary", row, 6)),
-        jams_pct: lv_f32(wb.get_value("Game Summary", row, 7)),
-        jammer_points: lv_i16(wb.get_value("Game Summary", row, 8)),
-        ppj: lv_f32(wb.get_value("Game Summary", row, 9)),
-        lost: lv_u8(wb.get_value("Game Summary", row, 10)),
-        lead: lv_u8(wb.get_value("Game Summary", row, 11)),
-        called: lv_u8(wb.get_value("Game Summary", row, 12)),
-        no_initial_trip: lv_u8(wb.get_value("Game Summary", row, 13)),
-        star_passes: lv_u8(wb.get_value("Game Summary", row, 14)),
-        lead_pct: lv_f32(wb.get_value("Game Summary", row, 15)),
-        lead_plus_minus: lv_i16(wb.get_value("Game Summary", row, 16)),
-        avg_lead_plus_minus: lv_f32(wb.get_value("Game Summary", row, 17)),
-        pts_for: lv_f32(wb.get_value("Game Summary", row, 18)),
-        pts_against: lv_f32(wb.get_value("Game Summary", row, 19)),
-        plus_minus: lv_f32(wb.get_value("Game Summary", row, 20)),
-        jammer_plus_minus: lv_f32(wb.get_value("Game Summary", row, 21)),
-        avg_jammer_plus_minus: lv_f32(wb.get_value("Game Summary", row, 22)),
-        pivot_plus_minus: lv_f32(wb.get_value("Game Summary", row, 23)),
-        avg_pivot_plus_minus: lv_f32(wb.get_value("Game Summary", row, 24)),
-        block_plus_minus: lv_f32(wb.get_value("Game Summary", row, 25)),
-        avg_block_plus_minus: lv_f32(wb.get_value("Game Summary", row, 26)),
-        pack_plus_minus: lv_f32(wb.get_value("Game Summary", row, 27)),
-        avg_pack_plus_minus: lv_f32(wb.get_value("Game Summary", row, 28)),
-        avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 29)),
-        vtar_pts_for: lv_f32(wb.get_value("Game Summary", row, 30)),
-        vtar_pts_against: lv_f32(wb.get_value("Game Summary", row, 31)),
-        vtar_total_plus_minus: lv_f32(wb.get_value("Game Summary", row, 32)),
-        vtar_jammer_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 33)),
-        vtar_pivot_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 34)),
-        vtar_blocker_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 35)),
-        vtar_pack_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 36)),
-        total_vtar_avg_plus_minus: lv_f32(wb.get_value("Game Summary", row, 37)),
-        penalty_count: lv_u8(wb.get_value("Game Summary", row, 38)),
+        jams_jammer: lv_u8(fv_val(wb, cached, row, 3)),
+        jams_pivot: lv_u8(fv_val(wb, cached, row, 4)),
+        jams_blocker: lv_u8(fv_val(wb, cached, row, 5)),
+        jams_total: lv_u16(fv_val(wb, cached, row, 6)),
+        jams_pct: lv_f32(fv_val(wb, cached, row, 7)),
+        jammer_points: lv_i16(fv_val(wb, cached, row, 8)),
+        ppj: lv_f32(fv_val(wb, cached, row, 9)),
+        lost: lv_u8(fv_val(wb, cached, row, 10)),
+        lead: lv_u8(fv_val(wb, cached, row, 11)),
+        called: lv_u8(fv_val(wb, cached, row, 12)),
+        no_initial_trip: lv_u8(fv_val(wb, cached, row, 13)),
+        star_passes: lv_u8(fv_val(wb, cached, row, 14)),
+        lead_pct: lv_f32(fv_val(wb, cached, row, 15)),
+        lead_plus_minus: lv_i16(fv_val(wb, cached, row, 16)),
+        avg_lead_plus_minus: lv_f32(fv_val(wb, cached, row, 17)),
+        pts_for: lv_f32(fv_val(wb, cached, row, 18)),
+        pts_against: lv_f32(fv_val(wb, cached, row, 19)),
+        plus_minus: lv_f32(fv_val(wb, cached, row, 20)),
+        jammer_plus_minus: lv_f32(fv_val(wb, cached, row, 21)),
+        avg_jammer_plus_minus: lv_f32(fv_val(wb, cached, row, 22)),
+        pivot_plus_minus: lv_f32(fv_val(wb, cached, row, 23)),
+        avg_pivot_plus_minus: lv_f32(fv_val(wb, cached, row, 24)),
+        block_plus_minus: lv_f32(fv_val(wb, cached, row, 25)),
+        avg_block_plus_minus: lv_f32(fv_val(wb, cached, row, 26)),
+        pack_plus_minus: lv_f32(fv_val(wb, cached, row, 27)),
+        avg_pack_plus_minus: lv_f32(fv_val(wb, cached, row, 28)),
+        avg_plus_minus: lv_f32(fv_val(wb, cached, row, 29)),
+        vtar_pts_for: lv_f32(fv_val(wb, cached, row, 30)),
+        vtar_pts_against: lv_f32(fv_val(wb, cached, row, 31)),
+        vtar_total_plus_minus: lv_f32(fv_val(wb, cached, row, 32)),
+        vtar_jammer_avg_plus_minus: lv_f32(fv_val(wb, cached, row, 33)),
+        vtar_pivot_avg_plus_minus: lv_f32(fv_val(wb, cached, row, 34)),
+        vtar_blocker_avg_plus_minus: lv_f32(fv_val(wb, cached, row, 35)),
+        vtar_pack_avg_plus_minus: lv_f32(fv_val(wb, cached, row, 36)),
+        total_vtar_avg_plus_minus: lv_f32(fv_val(wb, cached, row, 37)),
+        penalty_count: lv_u8(fv_val(wb, cached, row, 38)),
     }
 }
 
@@ -689,7 +718,13 @@ fn lv_u8(v: Option<LiteralValue>) -> Option<u8> {
     match v? {
         LiteralValue::Number(n) if n.is_finite() => Some((n.round() as i64).clamp(0, 255) as u8),
         LiteralValue::Int(i) => Some(i.clamp(0, 255) as u8),
-        LiteralValue::Text(s) => s.trim().parse().ok(),
+        LiteralValue::Text(s) => {
+            if s.trim().is_empty() {
+                Some(0)
+            } else {
+                s.trim().parse().ok()
+            }
+        }
         _ => None,
     }
 }
@@ -698,7 +733,13 @@ fn lv_u16(v: Option<LiteralValue>) -> Option<u16> {
     match v? {
         LiteralValue::Number(n) if n.is_finite() => Some((n.round() as i64).clamp(0, 65535) as u16),
         LiteralValue::Int(i) => Some(i.clamp(0, 65535) as u16),
-        LiteralValue::Text(s) => s.trim().parse().ok(),
+        LiteralValue::Text(s) => {
+            if s.trim().is_empty() {
+                Some(0)
+            } else {
+                s.trim().parse().ok()
+            }
+        }
         _ => None,
     }
 }
@@ -709,7 +750,13 @@ fn lv_i16(v: Option<LiteralValue>) -> Option<i16> {
             Some((n.round() as i64).clamp(i16::MIN as i64, i16::MAX as i64) as i16)
         }
         LiteralValue::Int(i) => Some(i.clamp(i16::MIN as i64, i16::MAX as i64) as i16),
-        LiteralValue::Text(s) => s.trim().parse().ok(),
+        LiteralValue::Text(s) => {
+            if s.trim().is_empty() {
+                Some(0)
+            } else {
+                s.trim().parse().ok()
+            }
+        }
         _ => None,
     }
 }
@@ -718,7 +765,13 @@ fn lv_f32(v: Option<LiteralValue>) -> Option<f32> {
     match v? {
         LiteralValue::Number(n) if n.is_finite() => Some(n as f32),
         LiteralValue::Int(i) => Some(i as f32),
-        LiteralValue::Text(s) => s.trim().parse().ok(),
+        LiteralValue::Text(s) => {
+            if s.trim().is_empty() {
+                Some(0.0)
+            } else {
+                s.trim().parse().ok()
+            }
+        }
         _ => None,
     }
 }
