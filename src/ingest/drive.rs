@@ -4,9 +4,14 @@ use reqwest::Client;
 use reqwest::header;
 use serde::Deserialize;
 use std::path::Path;
+use std::time::Duration;
+use tokio::sync::Semaphore;
 
 const SHEETS_MIME: &str = "application/vnd.google-apps.spreadsheet";
 const XLSX_MIME: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const INITIAL_RETRY_DELAY: Duration = Duration::from_secs(10);
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
+const MAX_ATTEMPTS: u32 = 5;
 
 #[derive(Debug, Deserialize)]
 pub struct DriveFile {
@@ -53,35 +58,79 @@ struct FileList {
 pub struct DriveClient {
     client: Client,
     api_key: String,
+    /// Serializes all HTTP requests to Google Drive so that only one is in
+    /// flight at any time, avoiding rate limits and 403/429 responses.
+    request_sem: Semaphore,
 }
 
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
-/// Retry transient network errors (TLS failures, connection drops) with
-/// exponential backoff. Max 3 attempts total (1 original + 2 retries).
-async fn with_retry<T, E: std::fmt::Display, F>(f: impl Fn() -> F) -> Result<T>
+/// Distinguishes retryable (transient) HTTP errors from permanent ones so the
+/// retry loop can give up immediately on 400/401/404 etc.
+enum FetchError {
+    Transient(String),
+    Permanent(String),
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FetchError::Transient(s) | FetchError::Permanent(s) => write!(f, "{s}"),
+        }
+    }
+}
+
+fn is_transient_http_status(status: reqwest::StatusCode, body: &str) -> bool {
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
+        return true;
+    }
+    // Google Drive overloads 403 for both rate limits (transient) and
+    // permission/access errors (permanent).  Check the JSON error reason.
+    if status == reqwest::StatusCode::FORBIDDEN {
+        return body.contains("rateLimitExceeded")
+            || body.contains("userRateLimitExceeded")
+            || body.contains("dailyLimitExceeded");
+    }
+    false
+}
+
+/// Read a snippet of the response body for error diagnostics.  Google error
+/// responses are small JSON payloads.
+async fn read_error_body(resp: reqwest::Response) -> String {
+    resp.text()
+        .await
+        .unwrap_or_else(|e| format!("(body unreadable: {e})"))
+}
+
+/// Retry transient errors (403, 429, 5xx, network failures) with exponential
+/// backoff: 10 s → 20 s → 40 s → 60 s (capped).  After `MAX_ATTEMPTS` total
+/// attempts the error is returned so the caller can skip the file and move on.
+/// Permanent client errors (400, 401, 404, …) are returned immediately.
+async fn with_retry<T, F, Fut>(f: F) -> Result<T>
 where
-    F: std::future::Future<Output = std::result::Result<T, E>>,
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<T, FetchError>>,
 {
-    let mut delay = std::time::Duration::from_millis(200);
-    for attempt in 0..3 {
+    let mut delay = INITIAL_RETRY_DELAY;
+    let mut attempts: u32 = 0;
+
+    loop {
+        attempts += 1;
         match f().await {
             Ok(val) => return Ok(val),
-            Err(e) => {
-                if attempt >= 2 {
+            Err(FetchError::Permanent(e)) => return Err(anyhow::anyhow!("{e}")),
+            Err(FetchError::Transient(e)) => {
+                if attempts >= MAX_ATTEMPTS {
                     return Err(anyhow::anyhow!("{e}"));
                 }
                 tracing::warn!(
-                    "transient drive API error (attempt {}/2), retrying in {:?}: {e}",
-                    attempt + 1,
-                    delay,
+                    "transient drive API error (attempt {attempts}/{MAX_ATTEMPTS}), retrying in {delay:?}: {e}",
                 );
                 tokio::time::sleep(delay).await;
-                delay *= 2;
+                delay = std::cmp::min(delay * 2, MAX_RETRY_DELAY);
             }
         }
     }
-    unreachable!()
 }
 
 impl DriveClient {
@@ -92,10 +141,16 @@ impl DriveClient {
             header::HeaderValue::from_static(APP_USER_AGENT),
         );
         let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(10))
             .default_headers(headers)
             .build()
             .expect("reqwest client builder should not fail");
-        Self { client, api_key }
+        Self {
+            client,
+            api_key,
+            request_sem: Semaphore::new(1),
+        }
     }
 
     pub async fn list_xlsx_since(&self, folder_id: &str, since: &str) -> Result<Vec<DriveFile>> {
@@ -149,14 +204,20 @@ impl DriveClient {
     }
 
     async fn send_list_request(&self, q: &str, page_token: &Option<String>) -> Result<FileList> {
-        let api_key = &self.api_key;
         with_retry(|| async {
+            // Serialize all HTTP requests — only one drive API call at a time.
+            let _permit = self
+                .request_sem
+                .acquire()
+                .await
+                .expect("request semaphore closed");
+
             let mut req = self
                 .client
                 .get("https://www.googleapis.com/drive/v3/files")
                 .query(&[
                     ("q", q),
-                    ("key", api_key),
+                    ("key", self.api_key.as_str()),
                     (
                         "fields",
                         "nextPageToken,files(id,name,modifiedTime,mimeType)",
@@ -166,46 +227,74 @@ impl DriveClient {
             if let Some(token) = page_token {
                 req = req.query(&[("pageToken", token.as_str())]);
             }
-            req.send()
+
+            let resp = req
+                .send()
                 .await
-                .map_err(|e| format!("network error: {e}"))?
-                .error_for_status()
-                .map_err(|e| format!("HTTP error: {e}"))?
-                .json::<FileList>()
+                .map_err(|e| FetchError::Transient(format!("network error: {e}")))?;
+
+            let status = resp.status();
+            if !status.is_success() {
+                let body = read_error_body(resp).await;
+                let msg = format!("HTTP {status}: {body}");
+                if is_transient_http_status(status, &body) {
+                    return Err(FetchError::Transient(msg));
+                }
+                return Err(FetchError::Permanent(msg));
+            }
+
+            resp.json::<FileList>()
                 .await
-                .map_err(|e| format!("parse error: {e}"))
+                .map_err(|e| FetchError::Transient(format!("parse error: {e}")))
         })
         .await
     }
 
     pub async fn download_file(&self, file_id: &str, mime_type: Option<&str>) -> Result<Vec<u8>> {
         let file_id = file_id.to_string();
-        let api_key = &self.api_key;
         let is_sheets = mime_type == Some(SHEETS_MIME);
+
         with_retry(|| async {
+            // Serialize all HTTP requests — only one drive API call at a time.
+            let _permit = self
+                .request_sem
+                .acquire()
+                .await
+                .expect("request semaphore closed");
+
             let req = if is_sheets {
                 self.client
                     .get(format!(
                         "https://www.googleapis.com/drive/v3/files/{file_id}/export"
                     ))
-                    .query(&[("mimeType", XLSX_MIME), ("key", api_key)])
+                    .query(&[("mimeType", XLSX_MIME), ("key", self.api_key.as_str())])
             } else {
                 self.client
                     .get(format!(
                         "https://www.googleapis.com/drive/v3/files/{file_id}"
                     ))
-                    .query(&[("alt", "media"), ("key", api_key)])
+                    .query(&[("alt", "media"), ("key", self.api_key.as_str())])
             };
-            let bytes = req
+
+            let resp = req
                 .send()
                 .await
-                .map_err(|e| format!("network error: {e}"))?
-                .error_for_status()
-                .map_err(|e| format!("HTTP error: {e}"))?
-                .bytes()
+                .map_err(|e| FetchError::Transient(format!("network error: {e}")))?;
+
+            let status = resp.status();
+            if !status.is_success() {
+                let body = read_error_body(resp).await;
+                let msg = format!("HTTP {status}: {body}");
+                if is_transient_http_status(status, &body) {
+                    return Err(FetchError::Transient(msg));
+                }
+                return Err(FetchError::Permanent(msg));
+            }
+
+            resp.bytes()
                 .await
-                .map_err(|e| format!("body read error: {e}"))?;
-            Ok::<Vec<u8>, String>(bytes.to_vec())
+                .map(|b| b.to_vec())
+                .map_err(|e| FetchError::Transient(format!("body read error: {e}")))
         })
         .await
     }
@@ -230,5 +319,60 @@ mod tests {
             .map(|s| format!(" and modifiedTime > '{s}'"))
             .unwrap_or_default();
         assert_eq!(clause, "");
+    }
+
+    #[test]
+    fn test_is_transient_http_status() {
+        use reqwest::StatusCode;
+
+        // Transient: 429, 5xx
+        assert!(super::is_transient_http_status(
+            StatusCode::TOO_MANY_REQUESTS,
+            ""
+        ));
+        assert!(super::is_transient_http_status(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ""
+        ));
+        assert!(super::is_transient_http_status(StatusCode::BAD_GATEWAY, ""));
+        assert!(super::is_transient_http_status(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ""
+        ));
+        assert!(super::is_transient_http_status(
+            StatusCode::GATEWAY_TIMEOUT,
+            ""
+        ));
+
+        // Permanent: 400, 401, 404
+        assert!(!super::is_transient_http_status(
+            StatusCode::BAD_REQUEST,
+            ""
+        ));
+        assert!(!super::is_transient_http_status(
+            StatusCode::UNAUTHORIZED,
+            ""
+        ));
+        assert!(!super::is_transient_http_status(StatusCode::NOT_FOUND, ""));
+
+        // 403: depends on body content
+        assert!(super::is_transient_http_status(
+            StatusCode::FORBIDDEN,
+            r#"{"error":{"errors":[{"reason":"rateLimitExceeded"}]}}"#
+        ));
+        assert!(super::is_transient_http_status(
+            StatusCode::FORBIDDEN,
+            r#"{"error":{"errors":[{"reason":"userRateLimitExceeded"}]}}"#
+        ));
+        assert!(super::is_transient_http_status(
+            StatusCode::FORBIDDEN,
+            r#"{"error":{"errors":[{"reason":"dailyLimitExceeded"}]}}"#
+        ));
+        assert!(!super::is_transient_http_status(
+            StatusCode::FORBIDDEN,
+            r#"{"error":{"errors":[{"reason":"forbidden"}]}}"#
+        ));
+        assert!(!super::is_transient_http_status(StatusCode::FORBIDDEN, ""));
+        assert!(!super::is_transient_http_status(StatusCode::OK, ""));
     }
 }
