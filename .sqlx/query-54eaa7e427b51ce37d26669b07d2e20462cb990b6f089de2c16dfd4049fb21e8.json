@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT side, stats FROM game_summary WHERE game_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "side",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "stats",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "54eaa7e427b51ce37d26669b07d2e20462cb990b6f089de2c16dfd4049fb21e8"
+}

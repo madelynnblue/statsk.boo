@@ -173,6 +173,24 @@ impl DriveClient {
         Ok(all)
     }
 
+    /// Lists files in the two-level folder tree under `folder_id` with paths
+    /// relative to it, e.g. "2023-Q1/[WFTDA]STATS-....xlsx". One list query
+    /// per subfolder (plus one for the subfolder listing; pagination handled
+    /// internally by list_items). Files sitting directly in the root folder
+    /// are not listed. Inherits the request serialization and retry logic.
+    /// Used by the zip backfill to map paths to Drive file IDs.
+    pub async fn list_tree_with_paths(&self, folder_id: &str) -> Result<Vec<(String, DriveFile)>> {
+        let subfolders = self.list_items(folder_id, true, None).await?;
+        let mut out = Vec::new();
+        for folder in subfolders {
+            let files = self.list_items(&folder.id, false, None).await?;
+            for f in files {
+                out.push((format!("{}/{}", folder.name, f.name), f));
+            }
+        }
+        Ok(out)
+    }
+
     async fn list_items(
         &self,
         folder_id: &str,

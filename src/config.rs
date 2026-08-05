@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::path::PathBuf;
 use std::time::Duration;
 
 pub struct Config {
@@ -7,6 +8,7 @@ pub struct Config {
     pub ingest_interval: Duration,
     pub ingest_jitter: Duration,
     pub ingest_dir: Option<String>,
+    pub game_data_dir: Option<PathBuf>,
     pub google_drive_folder_id: String,
     pub google_api_key: Option<String>,
 }
@@ -15,6 +17,7 @@ impl Config {
     pub fn from_env() -> Result<Self> {
         let ingest_dir = std::env::var("INGEST_DIR").ok();
         let google_api_key = std::env::var("GOOGLE_API_KEY").ok();
+        let game_data_dir = std::env::var("GAME_DATA_DIR").ok().map(PathBuf::from);
 
         anyhow::ensure!(
             ingest_dir.is_some() ^ google_api_key.is_some(),
@@ -31,6 +34,7 @@ impl Config {
             ingest_interval: parse_duration("INGEST_INTERVAL", "24h")?,
             ingest_jitter: parse_duration("INGEST_JITTER", "1h")?,
             ingest_dir,
+            game_data_dir,
             google_drive_folder_id: std::env::var("GOOGLE_DRIVE_FOLDER_ID")
                 .unwrap_or_else(|_| "1TC1QUmpIwy9NZX9DBPUPoHjkjFbbzyYr".into()),
             google_api_key,
@@ -57,12 +61,23 @@ mod tests {
             std::env::remove_var("BIND_ADDR");
             std::env::remove_var("INGEST_INTERVAL");
             std::env::remove_var("INGEST_JITTER");
+            std::env::remove_var("GAME_DATA_DIR");
             let cfg = Config::from_env().unwrap();
             assert_eq!(cfg.bind_addr, "0.0.0.0:8080");
             assert_eq!(cfg.ingest_interval.as_secs(), 86400); // 24h
             assert_eq!(cfg.ingest_jitter.as_secs(), 3600); // 1h
             assert_eq!(cfg.ingest_dir, None);
             assert_eq!(cfg.google_api_key.as_deref(), Some("key123"));
+            assert_eq!(cfg.game_data_dir, None);
+
+            // GAME_DATA_DIR set
+            std::env::set_var("GAME_DATA_DIR", "/tmp/cache");
+            let cfg = Config::from_env().unwrap();
+            assert_eq!(
+                cfg.game_data_dir.as_deref(),
+                Some(std::path::Path::new("/tmp/cache"))
+            );
+            std::env::remove_var("GAME_DATA_DIR");
 
             // INGEST_DIR set, no API key
             std::env::set_var("INGEST_DIR", "/tmp/xlsx");

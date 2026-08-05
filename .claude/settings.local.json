@@ -11,7 +11,9 @@
       "Bash(pip install *)",
       "Bash(python3 -c \"import openpyxl; print\\('ok'\\)\")",
       "Bash(cargo build *)",
-      "Bash(cargo fmt *)"
+      "Bash(cargo fmt *)",
+      "Bash(cargo run *)",
+      "Bash(docker exec *)"
     ]
   }
 }

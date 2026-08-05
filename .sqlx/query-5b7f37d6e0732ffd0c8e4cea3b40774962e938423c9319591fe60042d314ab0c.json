@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT side, league, team, color, league_canonical, team_canonical FROM game_sides WHERE game_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "side",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "league",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "team",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "color",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "league_canonical",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "team_canonical",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "5b7f37d6e0732ffd0c8e4cea3b40774962e938423c9319591fe60042d314ab0c"
+}

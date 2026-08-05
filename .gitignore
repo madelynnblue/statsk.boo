@@ -3,3 +3,6 @@
 /docs/
 /target-ra/
 /target/
+
+# Large downloaded artifacts
+Public Stats Repository-*.zip

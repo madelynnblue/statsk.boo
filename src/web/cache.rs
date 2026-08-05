@@ -43,24 +43,24 @@ pub async fn middleware(req: Request, next: Next, cache: Arc<Cache>) -> Response
     let (parts, body) = response.into_parts();
     match axum::body::to_bytes(body, usize::MAX).await {
         Ok(bytes) => {
-            if bytes.len() <= MAX_CACHEABLE_BODY_BYTES {
-                if let Ok(compressed) = brotli_compress(&bytes) {
-                    let mut store_headers = parts.headers.clone();
-                    store_headers.remove(header::CONTENT_LENGTH);
-                    store_headers.remove(header::TRANSFER_ENCODING);
-                    store_headers.remove(header::CONTENT_ENCODING);
-                    let entry = Arc::new(CachedEntry {
-                        headers: store_headers,
-                        body: compressed,
-                    });
-                    cache.set(key, entry.clone());
-                    if accepts_br {
-                        let mut resp = Response::new(Body::from(entry.body.clone()));
-                        *resp.headers_mut() = entry.headers.clone();
-                        resp.headers_mut()
-                            .insert(header::CONTENT_ENCODING, HeaderValue::from_static("br"));
-                        return resp;
-                    }
+            if bytes.len() <= MAX_CACHEABLE_BODY_BYTES
+                && let Ok(compressed) = brotli_compress(&bytes)
+            {
+                let mut store_headers = parts.headers.clone();
+                store_headers.remove(header::CONTENT_LENGTH);
+                store_headers.remove(header::TRANSFER_ENCODING);
+                store_headers.remove(header::CONTENT_ENCODING);
+                let entry = Arc::new(CachedEntry {
+                    headers: store_headers,
+                    body: compressed,
+                });
+                cache.set(key, entry.clone());
+                if accepts_br {
+                    let mut resp = Response::new(Body::from(entry.body.clone()));
+                    *resp.headers_mut() = entry.headers.clone();
+                    resp.headers_mut()
+                        .insert(header::CONTENT_ENCODING, HeaderValue::from_static("br"));
+                    return resp;
                 }
             }
             Response::from_parts(parts, Body::from(bytes))

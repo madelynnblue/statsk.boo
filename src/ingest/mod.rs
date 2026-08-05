@@ -1,3 +1,4 @@
+pub mod data_cache;
 pub mod drive;
 pub mod parse;
 
@@ -15,7 +16,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
@@ -123,7 +124,14 @@ pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>, cache: Arc<Cache>)
     // files have a larger modifiedTime and will be picked up on the next run.
     let tx_sem = Arc::new(tokio::sync::Semaphore::new(1));
 
-    match reingest_stale(pool.clone(), source.clone(), tx_sem.clone()).await {
+    match reingest_stale(
+        pool.clone(),
+        source.clone(),
+        tx_sem.clone(),
+        cfg.game_data_dir.clone(),
+    )
+    .await
+    {
         Ok(n) if n > 0 => {
             info!("re-ingested {n} stale game(s)");
             cache.clear();
@@ -186,6 +194,7 @@ async fn run_ingest(
         .map(|n| n.get())
         .unwrap_or(4);
     let prep_sem = Arc::new(tokio::sync::Semaphore::new(cores));
+    let cache_dir = cfg.game_data_dir.clone();
 
     // Spawn one prepare task per file (download + parse + read-only DB checks).
     // Tasks are independent Tokio tasks, so they run concurrently even while commits
@@ -197,13 +206,14 @@ async fn run_ingest(
             let pool = pool.clone();
             let source = source.clone();
             let prep_sem = prep_sem.clone();
+            let cache_dir = cache_dir.clone();
             tokio::spawn(async move {
                 let _permit = prep_sem
                     .acquire_owned()
                     .await
                     .expect("prep semaphore closed");
                 let name = file.name.clone();
-                let result = prepare_file(&pool, &source, &file).await;
+                let result = prepare_file(&pool, &source, &file, cache_dir.as_deref()).await;
                 (name, result)
             })
         })
@@ -264,6 +274,7 @@ async fn prepare_file(
     pool: &PgPool,
     source: &FileSource,
     file: &DriveFile,
+    cache_dir: Option<&Path>,
 ) -> anyhow::Result<Option<PreparedInsert>> {
     let modified_time: DateTime<Utc> = file.modified_time.parse()?;
 
@@ -303,6 +314,10 @@ async fn prepare_file(
         }
     };
     let canonical_id = compute_canonical_id(&fingerprint);
+    if let Some(dir) = cache_dir {
+        data_cache::write_game_data(dir, &canonical_id, &bytes)
+            .map_err(|e| anyhow::anyhow!("cache write failed for {}: {e:#}", file.name))?;
+    }
     let fingerprint_json = serde_json::to_value(&fingerprint)?;
     let game_data = serde_json::to_value(&game)?;
     let home_stats = game
@@ -480,7 +495,7 @@ async fn commit_file(
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
-struct GameFingerprint {
+pub struct GameFingerprint {
     date: NaiveDate,
     home_league: String,
     home_team: String,
@@ -490,7 +505,7 @@ struct GameFingerprint {
     away_score: i16,
 }
 
-fn compute_canonical_id(fp: &GameFingerprint) -> String {
+pub fn compute_canonical_id(fp: &GameFingerprint) -> String {
     let home_league = canonicalize_league(&fp.home_league);
     let home_team = canonicalize_team(Some(&fp.home_league), &fp.home_team);
     let away_league = canonicalize_league(&fp.away_league);
@@ -503,7 +518,10 @@ fn compute_canonical_id(fp: &GameFingerprint) -> String {
     hex::encode(&hash[..4])
 }
 
-fn build_fingerprint(game: &GameData, date: Option<NaiveDate>) -> anyhow::Result<GameFingerprint> {
+pub fn build_fingerprint(
+    game: &GameData,
+    date: Option<NaiveDate>,
+) -> anyhow::Result<GameFingerprint> {
     Ok(GameFingerprint {
         date: date.ok_or_else(|| anyhow::anyhow!("missing date"))?,
         home_league: game
@@ -531,7 +549,8 @@ fn build_fingerprint(game: &GameData, date: Option<NaiveDate>) -> anyhow::Result
     })
 }
 
-// Used by reingest_stale: always re-downloads and re-parses regardless of what's in the DB.
+// Used by reingest_stale: re-parses a game regardless of what's in the DB;
+// uses cached bytes when `data` is Some, otherwise downloads.
 async fn insert_parsed_file(
     pool: &PgPool,
     source: &FileSource,
@@ -540,8 +559,13 @@ async fn insert_parsed_file(
     modified_time: DateTime<Utc>,
     tx_sem: &tokio::sync::Semaphore,
     file_exists: bool,
+    data: Option<Vec<u8>>,
+    cache_dir: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let bytes = source.read_file(file_id, None).await?;
+    let bytes = match data {
+        Some(b) => b,
+        None => source.read_file(file_id, None).await?,
+    };
     let (game, date) = parse::parse_statsbook_with_date(&bytes)
         .map_err(|e| anyhow::anyhow!("parse error in {file_name}: {e:#}"))?;
 
@@ -561,6 +585,10 @@ async fn insert_parsed_file(
         }
     };
     let canonical_id = compute_canonical_id(&fingerprint);
+    if let Some(dir) = cache_dir {
+        data_cache::write_game_data(dir, &canonical_id, &bytes)
+            .map_err(|e| anyhow::anyhow!("cache write failed for {file_name}: {e:#}"))?;
+    }
     let fingerprint_json = serde_json::to_value(&fingerprint)?;
     let game_data = serde_json::to_value(&game)?;
     let home_stats = game
@@ -678,6 +706,7 @@ async fn reconcile_missing(
         .map(|n| n.get())
         .unwrap_or(4);
     let prep_sem = Arc::new(tokio::sync::Semaphore::new(cores));
+    let cache_dir = cfg.game_data_dir.clone();
 
     let mut ordered: FuturesOrdered<_> = missing
         .into_iter()
@@ -685,13 +714,14 @@ async fn reconcile_missing(
             let pool = pool.clone();
             let source = source.clone();
             let prep_sem = prep_sem.clone();
+            let cache_dir = cache_dir.clone();
             tokio::spawn(async move {
                 let _permit = prep_sem
                     .acquire_owned()
                     .await
                     .expect("prep semaphore closed");
                 let name = file.name.clone();
-                let result = prepare_file(&pool, &source, &file).await;
+                let result = prepare_file(&pool, &source, &file, cache_dir.as_deref()).await;
                 (name, result)
             })
         })
@@ -727,9 +757,10 @@ async fn reingest_stale(
     pool: Arc<PgPool>,
     source: Arc<FileSource>,
     tx_sem: Arc<tokio::sync::Semaphore>,
+    cache_dir: Option<PathBuf>,
 ) -> anyhow::Result<usize> {
     let rows = sqlx::query!(
-        "SELECT id, source, modified_time FROM games WHERE parser_version < $1",
+        "SELECT id, source, modified_time, canonical_id FROM games WHERE parser_version < $1",
         parse::PARSER_VERSION
     )
     .fetch_all(&*pool)
@@ -771,10 +802,15 @@ async fn reingest_stale(
         let pool = pool.clone();
         let source = source.clone();
         let tx_sem = tx_sem.clone();
+        let cache_dir = cache_dir.clone();
         set.spawn(async move {
             let _permit = permit;
             info!("re-ingesting {}/{}: {}", i + 1, total, row.id);
-            match insert_parsed_file(
+            let cached = cache_dir
+                .as_deref()
+                .and_then(|d| data_cache::read_game_data(d, &row.canonical_id));
+            let used_cache = cached.is_some();
+            let mut result = insert_parsed_file(
                 &pool,
                 &source,
                 &row.id,
@@ -782,9 +818,29 @@ async fn reingest_stale(
                 row.modified_time,
                 &tx_sem,
                 true,
+                cached,
+                cache_dir.as_deref(),
             )
-            .await
-            {
+            .await;
+            if result.is_err() && used_cache {
+                warn!(
+                    "re-ingest of {} from cache failed; falling back to download",
+                    row.id
+                );
+                result = insert_parsed_file(
+                    &pool,
+                    &source,
+                    &row.id,
+                    &row.id,
+                    row.modified_time,
+                    &tx_sem,
+                    true,
+                    None,
+                    cache_dir.as_deref(),
+                )
+                .await;
+            }
+            match result {
                 Ok(()) => 1,
                 Err(e) => {
                     warn!("re-ingest failed for {}: {e:#}", row.id);

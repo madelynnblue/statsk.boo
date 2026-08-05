@@ -24,6 +24,7 @@ futures = "0.3.32"
 brotli = "8.0.2"
 formualizer-workbook = { version = "0.6.0", features = ["calamine"] }
 formualizer-common = "2.0.0"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 formualizer-workbook = { version = "0.6.0", features = ["calamine"] }

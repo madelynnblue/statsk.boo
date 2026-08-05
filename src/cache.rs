@@ -77,24 +77,23 @@ fn available_memory_bytes() -> usize {
     // Try cgroup v2 memory limit (set on Cloud Run and other container runtimes)
     if let Ok(s) = std::fs::read_to_string("/sys/fs/cgroup/memory.max") {
         let trimmed = s.trim();
-        if trimmed != "max" {
-            if let Ok(n) = trimmed.parse::<usize>() {
-                return n;
-            }
+        if trimmed != "max"
+            && let Ok(n) = trimmed.parse::<usize>()
+        {
+            return n;
         }
     }
     // Fall back to total physical memory
     if let Ok(s) = std::fs::read_to_string("/proc/meminfo") {
         for line in s.lines() {
-            if let Some(rest) = line.strip_prefix("MemTotal:") {
-                if let Ok(kb) = rest
+            if let Some(rest) = line.strip_prefix("MemTotal:")
+                && let Ok(kb) = rest
                     .split_whitespace()
                     .next()
                     .unwrap_or("0")
                     .parse::<usize>()
-                {
-                    return kb * 1024;
-                }
+            {
+                return kb * 1024;
             }
         }
     }

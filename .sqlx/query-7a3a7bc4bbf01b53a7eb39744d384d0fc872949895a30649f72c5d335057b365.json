@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT date, parser_version, version, fingerprint, canonical_id, game_data FROM games WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 1,
+        "name": "parser_version",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "version",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "fingerprint",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "canonical_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "game_data",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "7a3a7bc4bbf01b53a7eb39744d384d0fc872949895a30649f72c5d335057b365"
+}
