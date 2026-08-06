@@ -20,9 +20,13 @@ async fn main() -> anyhow::Result<()> {
     let ingest_cfg = cfg.clone();
     let ingest_pool = pool.clone();
     let ingest_cache = cache.clone();
-    tokio::spawn(async move {
-        wsb::ingest::ingest_loop(ingest_cfg, ingest_pool, ingest_cache).await;
-    });
+    if cfg.ingest_enabled {
+        tokio::spawn(async move {
+            wsb::ingest::ingest_loop(ingest_cfg, ingest_pool, ingest_cache).await;
+        });
+    } else {
+        tracing::info!("ingest loop disabled (INGEST_ENABLED=false)");
+    }
 
     wsb::web::serve(cfg, pool, cache).await
 }

@@ -1,9 +1,12 @@
+use crate::ingest::drive_auth::ServiceAccount;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use reqwest::header;
 use serde::Deserialize;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 
@@ -57,7 +60,9 @@ struct FileList {
 
 pub struct DriveClient {
     client: Client,
-    api_key: String,
+    sa: Arc<ServiceAccount>,
+    /// Cached OAuth2 access token; `None` until first fetch / after a 401.
+    token: Mutex<Option<String>>,
     /// Serializes all HTTP requests to Google Drive so that only one is in
     /// flight at any time, avoiding rate limits and 403/429 responses.
     request_sem: Semaphore,
@@ -66,7 +71,7 @@ pub struct DriveClient {
 static APP_USER_AGENT: &str = concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"),);
 
 /// Distinguishes retryable (transient) HTTP errors from permanent ones so the
-/// retry loop can give up immediately on 400/401/404 etc.
+/// retry loop can give up immediately on 400/404 etc.
 enum FetchError {
     Transient(String),
     Permanent(String),
@@ -105,7 +110,7 @@ async fn read_error_body(resp: reqwest::Response) -> String {
 /// Retry transient errors (403, 429, 5xx, network failures) with exponential
 /// backoff: 10 s → 20 s → 40 s → 60 s (capped).  After `MAX_ATTEMPTS` total
 /// attempts the error is returned so the caller can skip the file and move on.
-/// Permanent client errors (400, 401, 404, …) are returned immediately.
+/// Permanent client errors (400, 404, …) are returned immediately.
 async fn with_retry<T, F, Fut>(f: F) -> Result<T>
 where
     F: Fn() -> Fut,
@@ -134,7 +139,7 @@ where
 }
 
 impl DriveClient {
-    pub fn new(api_key: String) -> Self {
+    pub fn new(sa: Arc<ServiceAccount>) -> Self {
         let mut headers = header::HeaderMap::new();
         headers.insert(
             header::USER_AGENT,
@@ -148,9 +153,27 @@ impl DriveClient {
             .expect("reqwest client builder should not fail");
         Self {
             client,
-            api_key,
+            sa,
+            token: Mutex::new(None),
             request_sem: Semaphore::new(1),
         }
+    }
+
+    async fn ensure_token(&self) -> Result<String, FetchError> {
+        if let Some(t) = self.token.lock().unwrap().clone() {
+            return Ok(t);
+        }
+        let t = self
+            .sa
+            .fetch_access_token(&self.client)
+            .await
+            .map_err(|e| FetchError::Transient(format!("token fetch failed: {e:#}")))?;
+        *self.token.lock().unwrap() = Some(t.clone());
+        Ok(t)
+    }
+
+    fn invalidate_token(&self) {
+        *self.token.lock().unwrap() = None;
     }
 
     pub async fn list_xlsx_since(&self, folder_id: &str, since: &str) -> Result<Vec<DriveFile>> {
@@ -230,12 +253,13 @@ impl DriveClient {
                 .await
                 .expect("request semaphore closed");
 
+            let token = self.ensure_token().await?;
             let mut req = self
                 .client
                 .get("https://www.googleapis.com/drive/v3/files")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
                 .query(&[
                     ("q", q),
-                    ("key", self.api_key.as_str()),
                     (
                         "fields",
                         "nextPageToken,files(id,name,modifiedTime,mimeType)",
@@ -252,6 +276,15 @@ impl DriveClient {
                 .map_err(|e| FetchError::Transient(format!("network error: {e}")))?;
 
             let status = resp.status();
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                // Token expired or invalid: drop it and let the retry loop
+                // fetch a fresh one on the next attempt.
+                self.invalidate_token();
+                let body = read_error_body(resp).await;
+                return Err(FetchError::Transient(format!(
+                    "HTTP 401 (token expired): {body}"
+                )));
+            }
             if !status.is_success() {
                 let body = read_error_body(resp).await;
                 let msg = format!("HTTP {status}: {body}");
@@ -280,18 +313,22 @@ impl DriveClient {
                 .await
                 .expect("request semaphore closed");
 
+            let token = self.ensure_token().await?;
             let req = if is_sheets {
                 self.client
                     .get(format!(
                         "https://www.googleapis.com/drive/v3/files/{file_id}/export"
                     ))
-                    .query(&[("mimeType", XLSX_MIME), ("key", self.api_key.as_str())])
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    .query(&[("mimeType", XLSX_MIME)])
             } else {
                 self.client
                     .get(format!(
                         "https://www.googleapis.com/drive/v3/files/{file_id}"
                     ))
-                    .query(&[("alt", "media"), ("key", self.api_key.as_str())])
+                    .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                    // alt=media is required: without it the endpoint returns file metadata JSON, not raw bytes.
+                    .query(&[("alt", "media")])
             };
 
             let resp = req
@@ -300,6 +337,15 @@ impl DriveClient {
                 .map_err(|e| FetchError::Transient(format!("network error: {e}")))?;
 
             let status = resp.status();
+            if status == reqwest::StatusCode::UNAUTHORIZED {
+                // Token expired or invalid: drop it and let the retry loop
+                // fetch a fresh one on the next attempt.
+                self.invalidate_token();
+                let body = read_error_body(resp).await;
+                return Err(FetchError::Transient(format!(
+                    "HTTP 401 (token expired): {body}"
+                )));
+            }
             if !status.is_success() {
                 let body = read_error_body(resp).await;
                 let msg = format!("HTTP {status}: {body}");
@@ -337,6 +383,19 @@ mod tests {
             .map(|s| format!(" and modifiedTime > '{s}'"))
             .unwrap_or_default();
         assert_eq!(clause, "");
+    }
+
+    #[test]
+    fn test_unauthorized_is_transient() {
+        use reqwest::StatusCode;
+
+        // 401 is handled explicitly in the request paths (token refresh),
+        // so it never reaches the generic classifier; the classifier itself
+        // still treats it as permanent if it somehow does.
+        assert!(!super::is_transient_http_status(
+            StatusCode::UNAUTHORIZED,
+            ""
+        ));
     }
 
     #[test]

@@ -87,9 +87,14 @@ read -r -s DATABASE_URL
 echo
 gh secret set DATABASE_URL --body "$DATABASE_URL" --repo "$REPO"
 
-printf "GOOGLE_API_KEY (input hidden): "
-read -r -s GOOGLE_API_KEY
-echo
-gh secret set GOOGLE_API_KEY --body "$GOOGLE_API_KEY" --repo "$REPO"
+# The secret holds the JSON *contents*, not a local path: the app opens
+# GOOGLE_SERVICE_ACCOUNT_PATH as a file path inside the container. The
+# deployment must materialize the secret to a file (Cloud Run secret volume,
+# or an entrypoint step writing it to e.g. /data/sa.json) and set
+# GOOGLE_SERVICE_ACCOUNT_PATH to that path.
+printf 'Path to downloaded service account JSON (e.g. ~/Downloads/wftda-sa.json): '
+read -r sa_json_path
+[ -f "$sa_json_path" ] || { echo "file not found: $sa_json_path" >&2; exit 1; }
+gh secret set GOOGLE_SERVICE_ACCOUNT_PATH < "$sa_json_path"
 
 echo "=== All secrets set. ==="

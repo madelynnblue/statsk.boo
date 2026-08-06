@@ -1,10 +1,10 @@
 //! One-off backfill: populate the GAME_DATA_DIR cache from a zip of all
 //! game files, and re-key source='file' rows to their Drive file IDs so
-//! web Drive links work. Requires GOOGLE_API_KEY for a one-time paced
-//! Drive listing (path -> file id); the cache fill itself is offline.
+//! web Drive links work. Requires GOOGLE_SERVICE_ACCOUNT_PATH for a one-time
+//! paced Drive listing (path -> file id); the cache fill itself is offline.
 //!
 //! Usage: cargo run --release --bin backfill_from_zip -- <zip> [--dry-run]
-//! Env:   DATABASE_URL, GAME_DATA_DIR, GOOGLE_API_KEY, GOOGLE_DRIVE_FOLDER_ID
+//! Env:   DATABASE_URL, GAME_DATA_DIR, GOOGLE_SERVICE_ACCOUNT_PATH, GOOGLE_DRIVE_FOLDER_ID
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -149,10 +149,10 @@ async fn main() -> Result<()> {
         .game_data_dir
         .as_deref()
         .context("GAME_DATA_DIR must be set")?;
-    let api_key = cfg
-        .google_api_key
-        .as_deref()
-        .context("GOOGLE_API_KEY must be set")?;
+    let sa = cfg
+        .service_account
+        .clone()
+        .context("GOOGLE_SERVICE_ACCOUNT_PATH must be set")?;
     let pool = PgPool::connect(&cfg.database_url).await?;
 
     // File-mode rows keyed by canonical_id (unique index -> one row).
@@ -272,7 +272,7 @@ async fn main() -> Result<()> {
     );
 
     // Pass 2: one paced Drive listing: path -> (id, modified_time).
-    let client = DriveClient::new(api_key.to_string());
+    let client = DriveClient::new(sa);
     let tree = client
         .list_tree_with_paths(&cfg.google_drive_folder_id)
         .await?;

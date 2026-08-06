@@ -72,7 +72,7 @@ statsk.boo (WFTDA StatsBook Browser) downloads WFTDA statsbook `.xlsx` files fro
 - Error handling: `AppError` enum (Internal / NotFound) logs internal errors with `tracing::error!` before returning a generic 500 response
 - Axum 0.8 uses `{param}` syntax for path captures (not `:param`)
 
-**Config:** `Config::from_env()` reads from environment variables. `.env` file at repo root with `DATABASE_URL` and `GOOGLE_API_KEY`.
+**Config:** `Config::from_env()` reads from environment variables. `.env` file at repo root with `DATABASE_URL` and (in drive mode) `GOOGLE_SERVICE_ACCOUNT_PATH` — the path to a Google service account JSON key (see README.md "Service account setup").
 
 ## Key conventions
 

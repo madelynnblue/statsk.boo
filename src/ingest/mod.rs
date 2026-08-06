@@ -1,5 +1,6 @@
 pub mod data_cache;
 pub mod drive;
+pub mod drive_auth;
 pub mod parse;
 
 use crate::cache::Cache;
@@ -108,9 +109,9 @@ pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>, cache: Arc<Cache>)
         FileSource::Local(LocalSource::new(root))
     } else {
         FileSource::Drive(DriveClient::new(
-            cfg.google_api_key
+            cfg.service_account
                 .clone()
-                .expect("GOOGLE_API_KEY required when INGEST_DIR not set"),
+                .expect("service account required when INGEST_DIR not set"),
         ))
     });
 
@@ -864,7 +865,12 @@ mod tests {
 
     #[test]
     fn file_source_str_drive() {
-        let s = FileSource::Drive(drive::DriveClient::new("fake".into()));
+        let sa = std::sync::Arc::new(drive_auth::ServiceAccount {
+            client_email: "test@test.iam.gserviceaccount.com".into(),
+            private_key: "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----\n".into(),
+            token_uri: "https://oauth2.googleapis.com/token".into(),
+        });
+        let s = FileSource::Drive(drive::DriveClient::new(sa));
         assert_eq!(s.source_str(), "drive");
     }
 

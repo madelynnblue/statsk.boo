@@ -8,14 +8,31 @@ A web application that downloads WFTDA statsbook `.xlsx` files from Google Drive
 - Parses `.xlsx` statsbooks using [calamine](https://github.com/tafia/calamine)
 - Stores structured game data in CockroachDB
 - Serves a web UI for browsing games and searching by player, team, or league
-- Automatically re-parses all games when the parser version is bumped
+- Automatically re-parses all games when the parser version is bumped (reparses read from a local cache, `GAME_DATA_DIR`, instead of re-downloading)
 
 ## Prerequisites
 
 - Rust (current stable)
 - Docker (for CockroachDB)
 - `cargo-watch` for the dev run script: `cargo install cargo-watch`
-- A Google API key with Drive read access, **or** a local directory of `.xlsx` statsbooks
+- A Google **service account** with Drive read access, **or** a local directory of `.xlsx` statsbooks
+
+## Service account setup (Google Drive access)
+
+The app talks to the Google Drive API as a **service account** (OAuth2 JWT bearer grant, `drive.readonly` scope) — no API key.
+
+**Create the service account (one-time, GCP console):**
+
+1. https://console.cloud.google.com/iam-admin/serviceaccounts — pick or create a project.
+2. **Create service account** → name it (e.g. `wsb-ingest`) → create.
+3. Keys tab → **Add key → Create new key → JSON** → download the key file.
+4. Enable the Drive API on the project: https://console.cloud.google.com/apis/library/drive.googleapis.com
+5. No folder sharing is needed — the WFTDA repo folder is public ("anyone with the link"). If requests ever come back 404, share the folder with the service account email (`<name>@<project>.iam.gserviceaccount.com`) in Google Drive as a fallback.
+
+**Where the key file lives:**
+
+- Dev: set `GOOGLE_SERVICE_ACCOUNT_PATH` in `.env` to the downloaded JSON, e.g. `/home/<you>/path/to/wftda-sa.json`.
+- Prod (`media-stack/docker-compose.yml`, `statskboo` service): copy the JSON to `media-stack/secrets/wftda-sa.json` (gitignored — never commit it), set `GOOGLE_SERVICE_ACCOUNT_PATH=/data/sa.json`, and mount it read-only: `./secrets/wftda-sa.json:/data/sa.json:ro`. Re-run `docker compose up -d --build statskboo` after placing it.
 
 ## Setup
 
@@ -31,7 +48,7 @@ docker exec cockroach cockroach sql --insecure -e "CREATE DATABASE wsb;"
 
 ```bash
 DATABASE_URL=postgresql://root@localhost:26257/wsb?sslmode=disable
-GOOGLE_API_KEY=your_api_key_here
+GOOGLE_SERVICE_ACCOUNT_PATH=/path/to/wftda-sa.json
 # or, for a local directory of xlsx files instead of Drive:
 # INGEST_DIR=/path/to/xlsx/files
 ```
@@ -44,14 +61,16 @@ GOOGLE_API_KEY=your_api_key_here
 
 ## Configuration
 
-All config is via environment variables. Exactly one of `GOOGLE_API_KEY` or `INGEST_DIR` must be set.
+All config is via environment variables. Exactly one of `GOOGLE_SERVICE_ACCOUNT_PATH` or `INGEST_DIR` must be set.
 
 | Variable | Default | Description |
 |---|---|---|
 | `DATABASE_URL` | required | CockroachDB connection string |
-| `GOOGLE_API_KEY` | — | Google API key for Drive access |
+| `GOOGLE_SERVICE_ACCOUNT_PATH` | — | Path to the service account JSON key (Drive access) |
 | `INGEST_DIR` | — | Local directory of `.xlsx` files (alternative to Drive) |
 | `GOOGLE_DRIVE_FOLDER_ID` | `1TC1QUmpIwy9NZX9DBPUPoHjkjFbbzyYr` | Drive folder to poll |
+| `GAME_DATA_DIR` | — | Cache dir for raw game `.xlsx` files; reparses read from it instead of re-downloading |
+| `INGEST_ENABLED` | `true` | Set to `false` to run the server without touching Drive |
 | `BIND_ADDR` | `0.0.0.0:8080` | HTTP listen address |
 | `PORT` | — | If set, overrides port in bind addr |
 | `INGEST_INTERVAL` | `24h` | How often to poll for new files |
@@ -77,10 +96,19 @@ SQLX_OFFLINE=true cargo build
 
 ```bash
 docker build -t wsb .
-docker run -e DATABASE_URL=... -e GOOGLE_API_KEY=... -p 8080:8080 wsb
+docker run -e DATABASE_URL=... -e GOOGLE_SERVICE_ACCOUNT_PATH=... \
+  -v /path/to/wftda-sa.json:/data/sa.json:ro -p 8080:8080 wsb
 ```
 
 The Dockerfile uses `SQLX_OFFLINE=true` so no database is needed at image build time.
+
+## One-off backfill from a zip
+
+```bash
+cargo run --release --bin backfill_from_zip -- <zip> [--dry-run]
+```
+
+Populates `GAME_DATA_DIR` from a Google-exported zip of the folder and re-keys `source='file'` rows to their Drive IDs (requires `GOOGLE_SERVICE_ACCOUNT_PATH` and `GAME_DATA_DIR`).
 
 ## Architecture
 
@@ -91,7 +119,7 @@ Single Tokio binary. `main.rs` spawns a background ingest loop that polls for ne
 2. Download and parse each `.xlsx` in parallel (bounded by CPU count)
 3. Compute a `canonical_id` (SHA-256 of date + teams + score) to deduplicate across Drive and local sources
 4. Write to DB in serialized transactions (CockroachDB serialization retries handled automatically)
-5. On startup, re-parse any games stored with an older `parser_version`
+5. On startup, re-parse any games stored with an older `parser_version` (from `GAME_DATA_DIR` when populated, else Drive)
 
 **Identity:**
 - Game: `canonical_id` (content hash) — stable across file renames/re-uploads
