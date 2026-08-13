@@ -127,9 +127,10 @@ pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>, cache: Arc<Cache>)
 
     match reingest_stale(
         pool.clone(),
-        source.clone(),
+        Some(source.clone()),
         tx_sem.clone(),
         cfg.game_data_dir.clone(),
+        false,
     )
     .await
     {
@@ -260,7 +261,7 @@ struct PreparedInsert {
     file_id: String,
     file_name: String,
     modified_time: DateTime<Utc>,
-    source_str: &'static str,
+    source_str: String,
     file_exists: bool,
     canonical_duplicate_id: Option<String>,
     date: Option<NaiveDate>,
@@ -368,7 +369,7 @@ async fn prepare_file(
         file_id: file.id.clone(),
         file_name: file.name.clone(),
         modified_time,
-        source_str: source.source_str(),
+        source_str: source.source_str().to_string(),
         file_exists,
         canonical_duplicate_id,
         date,
@@ -554,7 +555,8 @@ pub fn build_fingerprint(
 // uses cached bytes when `data` is Some, otherwise downloads.
 async fn insert_parsed_file(
     pool: &PgPool,
-    source: &FileSource,
+    source: Option<&FileSource>,
+    source_str: &str,
     file_id: &str,
     file_name: &str,
     modified_time: DateTime<Utc>,
@@ -565,7 +567,12 @@ async fn insert_parsed_file(
 ) -> anyhow::Result<()> {
     let bytes = match data {
         Some(b) => b,
-        None => source.read_file(file_id, None).await?,
+        None => {
+            source
+                .context("no cached data and no ingest source to download from")?
+                .read_file(file_id, None)
+                .await?
+        }
     };
     let (game, date) = parse::parse_statsbook_with_date(&bytes)
         .map_err(|e| anyhow::anyhow!("parse error in {file_name}: {e:#}"))?;
@@ -645,7 +652,7 @@ async fn insert_parsed_file(
             file_id: file_id.to_string(),
             file_name: file_name.to_string(),
             modified_time,
-            source_str: source.source_str(),
+            source_str: source_str.to_string(),
             file_exists,
             canonical_duplicate_id,
             date,
@@ -756,9 +763,10 @@ async fn reconcile_missing(
 
 async fn reingest_stale(
     pool: Arc<PgPool>,
-    source: Arc<FileSource>,
+    source: Option<Arc<FileSource>>,
     tx_sem: Arc<tokio::sync::Semaphore>,
     cache_dir: Option<PathBuf>,
+    cache_only: bool,
 ) -> anyhow::Result<usize> {
     let rows = sqlx::query!(
         "SELECT id, source, modified_time, canonical_id FROM games WHERE parser_version < $1",
@@ -771,16 +779,42 @@ async fn reingest_stale(
         return Ok(0);
     }
 
-    let source_str = source.source_str();
-    let (rows, skipped): (Vec<_>, Vec<_>) =
-        rows.into_iter().partition(|row| row.source == source_str);
-    if !skipped.is_empty() {
-        warn!(
-            "skipping {} stale game(s) due to source mismatch (runtime={})",
-            skipped.len(),
-            source_str
-        );
-    }
+    let rows = if cache_only {
+        // No ingest source to fall back to: only games whose raw bytes are
+        // already in the on-disk cache can be re-parsed.
+        let dir = match cache_dir.as_deref() {
+            Some(dir) => dir,
+            None => {
+                warn!("cache-only stale re-ingest skipped: GAME_DATA_DIR is not set");
+                return Ok(0);
+            }
+        };
+        let (cached, missing): (Vec<_>, Vec<_>) = rows
+            .into_iter()
+            .partition(|row| data_cache::read_game_data(dir, &row.canonical_id).is_some());
+        if !missing.is_empty() {
+            info!(
+                "skipping {} stale game(s) not present in the on-disk cache",
+                missing.len()
+            );
+        }
+        cached
+    } else {
+        let source = source
+            .as_ref()
+            .expect("ingest source required when cache_only is false");
+        let source_str = source.source_str();
+        let (rows, skipped): (Vec<_>, Vec<_>) =
+            rows.into_iter().partition(|row| row.source == source_str);
+        if !skipped.is_empty() {
+            warn!(
+                "skipping {} stale game(s) due to source mismatch (runtime={})",
+                skipped.len(),
+                source_str
+            );
+        }
+        rows
+    };
 
     if rows.is_empty() {
         return Ok(0);
@@ -810,10 +844,15 @@ async fn reingest_stale(
             let cached = cache_dir
                 .as_deref()
                 .and_then(|d| data_cache::read_game_data(d, &row.canonical_id));
+            if cache_only && cached.is_none() {
+                warn!("skipping {}: not present in the on-disk cache", row.id);
+                return 0;
+            }
             let used_cache = cached.is_some();
             let mut result = insert_parsed_file(
                 &pool,
-                &source,
+                source.as_deref(),
+                &row.source,
                 &row.id,
                 &row.id,
                 row.modified_time,
@@ -823,14 +862,15 @@ async fn reingest_stale(
                 cache_dir.as_deref(),
             )
             .await;
-            if result.is_err() && used_cache {
+            if result.is_err() && used_cache && !cache_only {
                 warn!(
                     "re-ingest of {} from cache failed; falling back to download",
                     row.id
                 );
                 result = insert_parsed_file(
                     &pool,
-                    &source,
+                    source.as_deref(),
+                    &row.source,
                     &row.id,
                     &row.id,
                     row.modified_time,
@@ -856,6 +896,18 @@ async fn reingest_stale(
         count += result?;
     }
     Ok(count)
+}
+
+/// Re-parses every game whose parser_version is behind PARSER_VERSION using
+/// only the on-disk cache — the ingest source is never contacted. Runs at
+/// startup regardless of INGEST_ENABLED so cached games are refreshed whenever
+/// the parser changes.
+pub async fn reingest_stale_from_cache(
+    pool: Arc<PgPool>,
+    cache_dir: Option<PathBuf>,
+) -> anyhow::Result<usize> {
+    let tx_sem = Arc::new(tokio::sync::Semaphore::new(1));
+    reingest_stale(pool, None, tx_sem, cache_dir, true).await
 }
 
 #[cfg(test)]
