@@ -10,7 +10,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 14;
+pub const PARSER_VERSION: i64 = 15;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes)?;
@@ -37,25 +37,29 @@ pub fn parse_statsbook_with_date(bytes: &[u8]) -> Result<(GameData, Option<chron
     let home_jam_counts = compute_jam_counts(&periods, Side::Home);
     let away_jam_counts = compute_jam_counts(&periods, Side::Away);
 
-    // Try formualizer first for fully-evaluated Game Summary; fall back to calamine
-    // with computed jam counts if formualizer fails.
-    // Read calamine GS sheet for error-fallback (formualizer sometimes returns
-    // Error on cells whose calamine-cached value is usable).
+    // Prefer the statsbook's own cached Game Summary values when present and
+    // non-trivial: they are the official calculated numbers for the game.
+    // Formualizer's re-evaluation over-counts jammer jams on statsbooks that
+    // fill in the SP* (opposing-team star pass) rows with jammer numbers, so
+    // only fall back to formula evaluation when the cached sheet is blank
+    // (files saved without calculating, e.g. the standbys-flatiron fixture).
     let gs_cached = wb.worksheet_range("Game Summary").ok();
 
-    let game_summary =
+    let game_summary = parse_game_summary(
+        &mut wb,
+        &igrf,
+        &home_players,
+        &away_players,
+        &home_jam_counts,
+        &away_jam_counts,
+    )
+    .ok()
+    .filter(|gs| {
+        gs.home_totals.jams_total.unwrap_or(0) > 0 && gs.away_totals.jams_total.unwrap_or(0) > 0
+    })
+    .or_else(|| {
         parse_game_summary_formualizer(bytes, &home_players, &away_players, gs_cached.as_ref())
-            .or_else(|| {
-                parse_game_summary(
-                    &mut wb,
-                    &igrf,
-                    &home_players,
-                    &away_players,
-                    &home_jam_counts,
-                    &away_jam_counts,
-                )
-                .ok()
-            });
+    });
 
     let (home_score, away_score) = parse_igrf_scores(&mut wb).unwrap_or_else(|| {
         (

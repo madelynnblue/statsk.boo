@@ -67,6 +67,20 @@ const FIXTURES: &[Fixture] = &[
         summary_players: (15, 10),
         scores: (198, 97),
     },
+    // Regression test: this statsbook's Game Summary is cached and correct
+    // (49/212 home, 43/236 away), but the LU JAMMER SUMPRODUCT formula counts
+    // SP* (opposing-team star pass) rows, so formualizer re-evaluation
+    // over-counts jammer jams (52/215, 52/245). The parser must prefer the
+    // statsbook's own cached values.
+    Fixture {
+        path: "rocstars-connecticut.xlsx",
+        period_count: 2,
+        jam_counts: &[20, 20],
+        star_pass_counts: &[6, 6],
+        penalties: 35,
+        summary_players: (15, 15),
+        scores: (82, 210),
+    },
     // Regression test for formula-evaluated Game Summary (this statsbook's
     // Game Summary formulas were not cached — calamine saw zeros everywhere).
     // Formualizer evaluates the SUMPRODUCT/LU/SK formulas and recovers all
@@ -169,4 +183,24 @@ fn test_fixture_corpus() {
             f.path
         );
     }
+}
+
+#[test]
+fn test_fixture_summary_totals() {
+    // SP* rows (star passes by the opposing team) must not be counted as jammer
+    // jams. Formualizer's re-evaluation of the LU JAMMER formula counts them,
+    // inflating the totals; the cached values in the statsbook are correct.
+    let game = parse_fixture("rocstars-connecticut.xlsx");
+    let gs = game.game_summary.as_ref().unwrap();
+    assert_eq!(gs.home_totals.jams_jammer, Some(49));
+    assert_eq!(gs.home_totals.jams_total, Some(212));
+    assert_eq!(gs.away_totals.jams_jammer, Some(43));
+    assert_eq!(gs.away_totals.jams_total, Some(236));
+    // Per-player: Demonica (237) jammed 10 jams, not 12; FeFe (2150) 10, not 11.
+    let demonica = gs.home_players.iter().find(|p| p.number == "237").unwrap();
+    assert_eq!(demonica.jams_jammer, Some(10));
+    assert_eq!(demonica.jams_total, Some(10));
+    let fefe = gs.home_players.iter().find(|p| p.number == "2150").unwrap();
+    assert_eq!(fefe.jams_jammer, Some(10));
+    assert_eq!(fefe.jams_total, Some(10));
 }
