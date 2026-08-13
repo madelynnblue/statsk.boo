@@ -1,6 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Search: {{ query }}{% endblock %}
 {% block content %}
+<form class="search-row" action="/search" method="get">
+  <input type="search" name="q" value="{{ query }}" placeholder="Search players, teams, leagues, tournaments, venues…" autofocus>
+  <button type="submit">Search</button>
+</form>
 {% if query | length >= 2 %}
   {% if not players and not teams and not leagues and not games %}
   <p>Nothing found for "{{ query }}".</p>
