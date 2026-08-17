@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT side, number, name FROM game_skaters WHERE game_id = $1",
+  "query": "SELECT side, number, name, name_canonical FROM game_skaters WHERE game_id = $1",
   "describe": {
     "columns": [
       {
@@ -17,6 +17,11 @@
         "ordinal": 2,
         "name": "name",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "name_canonical",
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -27,8 +32,9 @@
     "nullable": [
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "c0969824613ff804f0e9824513cc9d217c54694237d63814ccd5fae6a2c92891"
+  "hash": "f6e594996118dba2011f8c419f5f12e14284bea8153fae301e75dcb1719e32be"
 }

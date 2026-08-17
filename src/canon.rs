@@ -57,6 +57,30 @@ pub fn canonicalize_team(league: Option<&str>, team: &str) -> String {
     }
 }
 
+/// Canonical form of a player name for identity matching: lowercase,
+/// alphanumeric-only (like league/team canonicals), with captain markers
+/// such as "(C)" or "( c )" stripped. Handles case, hyphen/space,
+/// apostrophe, and whitespace variants so one player always has one identity.
+pub fn canonicalize_name(name: &str) -> String {
+    let mut s = name.trim().to_lowercase();
+    // Drop captain markers: parenthetical groups whose trimmed content is
+    // exactly "c". In real data these appear only as a trailing marker
+    // ("Perséfone (C)"), so scanning left-to-right is sufficient.
+    loop {
+        let Some(open) = s.find('(') else { break };
+        let Some(rel_close) = s[open..].find(')') else {
+            break;
+        };
+        let close = open + rel_close;
+        if s[open + 1..close].trim() == "c" {
+            s.replace_range(open..=close, "");
+        } else {
+            break;
+        }
+    }
+    s.chars().filter(|c| c.is_alphanumeric()).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,6 +117,33 @@ mod tests {
                 expected,
                 "team: {team} / league: {league:?}"
             );
+        }
+    }
+
+    #[test]
+    fn test_canonicalize_name() {
+        let cases = [
+            ("Skye the Sk8er", "skyethesk8er"),
+            ("Skye The Sk8er", "skyethesk8er"),
+            ("SKYE THE SK8ER", "skyethesk8er"),
+            ("Cherry Bl'Awesome", "cherryblawesome"),
+            ("Cherry Bl’Awesome", "cherryblawesome"),
+            ("JESSA-BIT PSYCHO", "jessabitpsycho"),
+            ("Jessa Bit Psycho", "jessabitpsycho"),
+            ("O'Wheely?", "owheely"),
+            ("O'WHEELY?", "owheely"),
+            ("Perséfone", "perséfone"),
+            ("Perséfone (C)", "perséfone"),
+            ("Perséfone ( c )", "perséfone"),
+            ("Ziggy Scardust ( C )", "ziggyscardust"),
+            ("Circuit Breaker", "circuitbreaker"),
+            ("Circuit Breaker ( C )", "circuitbreaker"),
+            ("  Foo  Bar  ", "foobar"),
+            ("", ""),
+            ("(C)", ""),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(canonicalize_name(input), expected, "name: {input:?}");
         }
     }
 }

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::canon::{best_name, canonicalize_league, canonicalize_team};
+use crate::canon::{best_name, canonicalize_league, canonicalize_name, canonicalize_team};
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
 use axum::response::Html;
@@ -63,7 +63,7 @@ pub async fn handle(
             HashMap::new();
         for r in &player_rows {
             let lc = canonicalize_league(r.league.as_deref().unwrap_or(""));
-            let nc = r.name.to_lowercase();
+            let nc = canonicalize_name(&r.name);
             player_groups
                 .entry((lc, nc, r.number.clone()))
                 .or_default()

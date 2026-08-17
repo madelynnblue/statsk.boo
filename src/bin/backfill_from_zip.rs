@@ -51,14 +51,14 @@ async fn rekey_row(
         .map(|r| (r.side, r.league, r.team, r.color, r.league_canonical, r.team_canonical))
         .collect();
 
-    let skaters: Vec<(String, String, String)> = sqlx::query!(
-        "SELECT side, number, name FROM game_skaters WHERE game_id = $1",
+    let skaters: Vec<(String, String, String, String)> = sqlx::query!(
+        "SELECT side, number, name, name_canonical FROM game_skaters WHERE game_id = $1",
         old_id
     )
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|r| (r.side, r.number, r.name))
+    .map(|r| (r.side, r.number, r.name, r.name_canonical))
     .collect();
 
     let summaries: Vec<(String, serde_json::Value)> = sqlx::query!(
@@ -112,14 +112,19 @@ async fn rekey_row(
         .await?;
     }
     if !skaters.is_empty() {
-        let mut qb =
-            sqlx::QueryBuilder::new("INSERT INTO game_skaters (game_id, side, number, name) ");
-        qb.push_values(skaters.iter(), |mut b, (side, number, name)| {
-            b.push_bind(drive_id)
-                .push_bind(side)
-                .push_bind(number)
-                .push_bind(name);
-        });
+        let mut qb = sqlx::QueryBuilder::new(
+            "INSERT INTO game_skaters (game_id, side, number, name, name_canonical) ",
+        );
+        qb.push_values(
+            skaters.iter(),
+            |mut b, (side, number, name, name_canonical)| {
+                b.push_bind(drive_id)
+                    .push_bind(side)
+                    .push_bind(number)
+                    .push_bind(name)
+                    .push_bind(name_canonical);
+            },
+        );
         qb.build().execute(&mut *tx).await?;
     }
     for (side, stats) in &summaries {

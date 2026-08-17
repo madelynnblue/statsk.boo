@@ -4,7 +4,7 @@ pub mod drive_auth;
 pub mod parse;
 
 use crate::cache::Cache;
-use crate::canon::{canonicalize_league, canonicalize_team};
+use crate::canon::{canonicalize_league, canonicalize_name, canonicalize_team};
 use crate::config::Config;
 use crate::models::GameData;
 use anyhow::Context;
@@ -421,7 +421,7 @@ async fn commit_file(
         .execute(&mut *tx)
         .await?;
 
-        let mut skater_rows: Vec<(String, String, String, String)> = Vec::new();
+        let mut skater_rows: Vec<(String, String, String, String, String)> = Vec::new();
         for (side_key, side) in [("home", &prep.game.home), ("away", &prep.game.away)] {
             let league_canonical = canonicalize_league(side.league.as_deref().unwrap_or(""));
             let team_canonical =
@@ -440,23 +440,33 @@ async fn commit_file(
             .await?;
 
             for skater in &side.skaters {
+                // Roster rows without a name are not searchable identities.
+                if skater.name.is_empty() {
+                    continue;
+                }
                 skater_rows.push((
                     prep.file_id.clone(),
                     side_key.to_string(),
                     skater.number.clone(),
                     skater.name.clone(),
+                    canonicalize_name(&skater.name),
                 ));
             }
         }
         if !skater_rows.is_empty() {
-            let mut qb =
-                sqlx::QueryBuilder::new("INSERT INTO game_skaters (game_id, side, number, name) ");
-            qb.push_values(skater_rows, |mut b, (game_id, side, number, name)| {
-                b.push_bind(game_id)
-                    .push_bind(side)
-                    .push_bind(number)
-                    .push_bind(name);
-            });
+            let mut qb = sqlx::QueryBuilder::new(
+                "INSERT INTO game_skaters (game_id, side, number, name, name_canonical) ",
+            );
+            qb.push_values(
+                skater_rows,
+                |mut b, (game_id, side, number, name, name_canonical)| {
+                    b.push_bind(game_id)
+                        .push_bind(side)
+                        .push_bind(number)
+                        .push_bind(name)
+                        .push_bind(name_canonical);
+                },
+            );
             qb.build().execute(&mut *tx).await?;
         }
 

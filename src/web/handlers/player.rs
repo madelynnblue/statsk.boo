@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::canon::canonicalize_league;
+use crate::canon::{best_name, canonicalize_league, canonicalize_name};
 use crate::models::{GameData, SideStats, SummaryPlayer};
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
@@ -53,20 +53,21 @@ pub async fn handle(
     Query(params): Query<PlayerParams>,
 ) -> Result<Html<String>, AppError> {
     let league_canonical = canonicalize_league(&params.league);
+    let name_canonical = canonicalize_name(&params.name);
 
     let rows = sqlx::query!(
         r#"SELECT g.id, g.canonical_id, g.date, g.game_data,
-                  gs.side as "side!: String",
+                  gs.side as "side!: String", gs.name,
                   player_side.league, player_side.team,
                   opp.league as opp_league, opp.team as opp_team
            FROM games g
            JOIN game_skaters gs ON gs.game_id = g.id
            JOIN game_sides player_side ON player_side.game_id = g.id AND player_side.side = gs.side
            JOIN game_sides opp ON opp.game_id = g.id AND opp.side != gs.side
-           WHERE player_side.league_canonical = $1 AND gs.name = $2 AND gs.number = $3
+           WHERE player_side.league_canonical = $1 AND gs.name_canonical = $2 AND gs.number = $3
            ORDER BY g.date DESC"#,
         league_canonical,
-        params.name,
+        name_canonical,
         params.number,
     )
     .fetch_all(&*state.pool)
@@ -76,6 +77,8 @@ pub async fn handle(
         .first()
         .and_then(|r| r.league.clone())
         .unwrap_or_else(|| params.league.clone());
+    let display_name =
+        best_name(rows.iter().map(|r| r.name.as_str())).unwrap_or_else(|| params.name.clone());
     let display_team = rows
         .first()
         .and_then(|r| r.team.clone())
@@ -215,7 +218,7 @@ pub async fn handle(
         league_canonical => league_canonical,
         league => display_league,
         team   => display_team,
-        name   => params.name,
+        name   => display_name,
         number => params.number,
         career => career,
         games  => game_rows,
