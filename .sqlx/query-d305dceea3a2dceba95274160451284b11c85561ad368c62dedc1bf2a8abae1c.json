@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT league, team FROM game_sides\n               WHERE league ILIKE $1 OR team ILIKE $1\n               ORDER BY 1, 2\n               LIMIT 200",
+  "query": "SELECT league, team FROM game_sides\n               WHERE league ILIKE $1 OR team ILIKE $1\n               ORDER BY 2, 1\n               LIMIT 200",
   "describe": {
     "columns": [
       {
@@ -24,5 +24,5 @@
       true
     ]
   },
-  "hash": "83f4676bdd263e89c48c1c0e47dd987ba1213d016b85b68de105ead0be989890"
+  "hash": "d305dceea3a2dceba95274160451284b11c85561ad368c62dedc1bf2a8abae1c"
 }

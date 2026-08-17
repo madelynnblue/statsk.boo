@@ -52,7 +52,7 @@ pub async fn handle(
                FROM game_skaters gs
                INNER LOOKUP JOIN game_sides gsi ON gsi.game_id = gs.game_id AND gsi.side = gs.side
                WHERE gs.name ILIKE $1
-               ORDER BY 3, 1
+               ORDER BY 1, 2, 3
                LIMIT 200"#,
             &pattern,
         )
@@ -81,12 +81,17 @@ pub async fn handle(
                 })
             })
             .collect();
-        players.sort_by(|a, b| a.league.cmp(&b.league).then(a.name.cmp(&b.name)));
+        players.sort_by(|a, b| {
+            a.name
+                .cmp(&b.name)
+                .then(a.number.cmp(&b.number))
+                .then(a.league.cmp(&b.league))
+        });
 
         let team_rows = sqlx::query!(
             r#"SELECT league, team FROM game_sides
                WHERE league ILIKE $1 OR team ILIKE $1
-               ORDER BY 1, 2
+               ORDER BY 2, 1
                LIMIT 200"#,
             &pattern,
         )
@@ -110,7 +115,7 @@ pub async fn handle(
                 Some(TeamResult { league, team })
             })
             .collect();
-        teams.sort_by(|a, b| a.league.cmp(&b.league).then(a.team.cmp(&b.team)));
+        teams.sort_by(|a, b| a.team.cmp(&b.team).then(a.league.cmp(&b.league)));
 
         let league_rows = sqlx::query!(
             r#"SELECT DISTINCT league FROM game_sides
@@ -153,7 +158,7 @@ pub async fn handle(
         .fetch_all(&*state.pool)
         .await?;
 
-        let games: Vec<GameResult> = game_rows
+        let mut games: Vec<GameResult> = game_rows
             .into_iter()
             .map(|r| GameResult {
                 game_id: r.canonical_id,
@@ -168,6 +173,15 @@ pub async fn handle(
                 venue_name: r.venue_name,
             })
             .collect();
+
+        games.sort_by(|a, b| {
+            b.date
+                .cmp(&a.date)
+                .then(a.home_team.cmp(&b.home_team))
+                .then(a.away_team.cmp(&b.away_team))
+                .then(a.home_score.cmp(&b.home_score))
+                .then(a.away_score.cmp(&b.away_score))
+        });
 
         (players, teams, leagues, games)
     } else {
