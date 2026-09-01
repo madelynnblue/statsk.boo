@@ -236,7 +236,7 @@ async fn main() -> Result<()> {
                             break;
                         }
                     }
-                    match parse_statsbook_with_date(&bytes).and_then(|(game, date)| {
+                    match parse_statsbook_with_date(&bytes, Some(name)).and_then(|(game, date)| {
                         build_fingerprint(&game, date).map(|fp| compute_canonical_id(&fp))
                     }) {
                         Ok(canonical_id) => {

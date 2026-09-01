@@ -297,7 +297,7 @@ async fn prepare_file(
     let bytes = source
         .read_file(&file.id, file.mime_type.as_deref())
         .await?;
-    let (game, date) = parse::parse_statsbook_with_date(&bytes)
+    let (game, date) = parse::parse_statsbook_with_date(&bytes, Some(&file.name))
         .map_err(|e| anyhow::anyhow!("parse error in {}: {e:#}", file.name))?;
 
     if let Some(ref d) = date {
@@ -587,7 +587,7 @@ async fn insert_parsed_file(
                 .await?
         }
     };
-    let (game, date) = parse::parse_statsbook_with_date(&bytes)
+    let (game, date) = parse::parse_statsbook_with_date(&bytes, Some(file_name))
         .map_err(|e| anyhow::anyhow!("parse error in {file_name}: {e:#}"))?;
 
     if let Some(ref d) = date {

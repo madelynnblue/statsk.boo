@@ -66,8 +66,7 @@ pub fn canonicalize_name(name: &str) -> String {
     // Drop captain markers: parenthetical groups whose trimmed content is
     // exactly "c". In real data these appear only as a trailing marker
     // ("Perséfone (C)"), so scanning left-to-right is sufficient.
-    loop {
-        let Some(open) = s.find('(') else { break };
+    while let Some(open) = s.find('(') {
         let Some(rel_close) = s[open..].find(')') else {
             break;
         };

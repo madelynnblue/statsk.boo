@@ -1,6 +1,7 @@
 use crate::models::*;
 use anyhow::{Context, Result};
 use calamine::{Data, DataType, Range, Reader, Xlsx, open_workbook_from_rs};
+use chrono::Datelike;
 use formualizer_common::LiteralValue;
 use formualizer_workbook::{
     LoadStrategy, SpreadsheetReader, Workbook, WorkbookConfig, backends::CalamineAdapter,
@@ -10,20 +11,27 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 17;
+pub const PARSER_VERSION: i64 = 18;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
-    let (game, _) = parse_statsbook_with_date(bytes)?;
+    let (game, _) = parse_statsbook_with_date(bytes, None)?;
     Ok(game)
 }
 
-pub fn parse_statsbook_with_date(bytes: &[u8]) -> Result<(GameData, Option<chrono::NaiveDate>)> {
+/// Parse a statsbook. `file_name`, when provided, is used as a last-resort
+/// source for the game date (some uploaders leave the IGRF date cell blank or
+/// typed as text; the file name always carries the date per the
+/// `[WFTDA]STATS-YYYY-MM-DD_...` convention).
+pub fn parse_statsbook_with_date(
+    bytes: &[u8],
+    file_name: Option<&str>,
+) -> Result<(GameData, Option<chrono::NaiveDate>)> {
     let cursor = Cursor::new(bytes);
     let mut wb: Xlsx<_> = open_workbook_from_rs(cursor).context("failed to open xlsx workbook")?;
 
     let version = parse_version(&mut wb);
     let venue = parse_venue(&mut wb)?;
-    let (tournament, host_league, date) = parse_igrf_meta(&mut wb)?;
+    let (tournament, host_league, date) = parse_igrf_meta(&mut wb, file_name)?;
     let mut home = parse_team(&mut wb, 1, 2, 13, 20)?;
     let mut away = parse_team(&mut wb, 8, 9, 13, 20)?;
     let mut periods = parse_scores(&mut wb)?;
@@ -267,12 +275,151 @@ fn parse_venue<R: std::io::Read + std::io::Seek>(wb: &mut Xlsx<R>) -> Result<Ven
 
 fn parse_igrf_meta<R: std::io::Read + std::io::Seek>(
     wb: &mut Xlsx<R>,
+    file_name: Option<&str>,
 ) -> Result<(Option<String>, Option<String>, Option<chrono::NaiveDate>)> {
     let sheet = wb.worksheet_range("IGRF").context("no IGRF sheet")?;
     let tournament = cell_str(&sheet, 4, 1);
     let host_league = cell_str(&sheet, 4, 8);
-    let date = sheet.get_value((6, 1)).and_then(|d| d.as_date());
+    let date = igrf_date(&sheet, file_name);
     Ok((tournament, host_league, date))
+}
+
+/// Resolve the game date from the IGRF (6, 1) cell. Uploaders occasionally
+/// type the date as text instead of a real Excel date, or leave the cell
+/// blank; fall back from the cached DateTime value to text parsing, then to
+/// the date embedded in the file name.
+fn igrf_date(sheet: &Range<Data>, file_name: Option<&str>) -> Option<chrono::NaiveDate> {
+    if let Some(d) = sheet.get_value((6, 1)).and_then(|d| d.as_date()) {
+        return Some(d);
+    }
+    let file_date = file_name.and_then(date_from_file_name);
+    cell_str(sheet, 6, 1)
+        .as_deref()
+        .and_then(|t| parse_text_date(t, file_date))
+        .or(file_date)
+}
+
+/// Parse a date typed as text into the IGRF date cell (e.g. "2026-06-27",
+/// "2025/02/08", "Sept 7 2024"). For the ambiguous `MM/DD/YYYY` vs
+/// `DD/MM/YYYY` slash forms, `file_date` (from the file name, which always
+/// uses ISO order) disambiguates; without it, month-first is the default.
+fn parse_text_date(text: &str, file_date: Option<chrono::NaiveDate>) -> Option<chrono::NaiveDate> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    // WFTDA games never predate the 1990s and a correct date is never more
+    // than a day in the future, so anything outside that range (e.g. a 2-digit
+    // year parsing as "24" -> AD 24) is a misparse: reject it so the file-name
+    // date in igrf_date gets a chance to provide the real date.
+    let plausible =
+        |d: chrono::NaiveDate| d.year() >= 1990 && d.year() <= chrono::Utc::now().year() + 1;
+    for fmt in ["%Y-%m-%d", "%Y/%m/%d"] {
+        if let Some(d) = chrono::NaiveDate::parse_from_str(text, fmt).ok()
+            && plausible(d)
+        {
+            return Some(d);
+        }
+    }
+    if let Some(d) = parse_month_name_date(text)
+        && plausible(d)
+    {
+        return Some(d);
+    }
+    // Ambiguous slash forms: both interpretations may be valid (e.g. "08/06/2024"
+    // is Aug 6 or Jun 8). Prefer the interpretation matching the file-name date;
+    // otherwise default to month-first. Both interpretations share the parsed
+    // year, so the plausibility check applies to either.
+    let month_first = chrono::NaiveDate::parse_from_str(text, "%m/%d/%Y").ok();
+    let day_first = chrono::NaiveDate::parse_from_str(text, "%d/%m/%Y").ok();
+    match (month_first, day_first) {
+        (Some(mf), Some(df)) if mf != df && file_date == Some(df) => Some(df),
+        (Some(mf), _) if plausible(mf) => Some(mf),
+        (None, Some(df)) if plausible(df) => Some(df),
+        _ => None,
+    }
+}
+
+/// Parse a month-name date like "Sept 7 2024" or "7 Sep 2024". chrono's
+/// `%b`/`%B` parsing is unsupported, so the month token is mapped to a number
+/// by hand and the remaining day/year tokens are parsed numerically.
+fn parse_month_name_date(text: &str) -> Option<chrono::NaiveDate> {
+    let month_of = |t: &str| -> Option<u32> {
+        let lower = t.to_ascii_lowercase();
+        match lower.as_str() {
+            "january" => Some(1),
+            "february" => Some(2),
+            "march" => Some(3),
+            "april" => Some(4),
+            "may" => Some(5),
+            "june" => Some(6),
+            "july" => Some(7),
+            "august" => Some(8),
+            "september" => Some(9),
+            "october" => Some(10),
+            "november" => Some(11),
+            "december" => Some(12),
+            _ => None,
+        }
+    };
+    let abbr_of = |t: &str| -> Option<u32> {
+        // "sept" is a common 4-letter abbreviation of September; every other
+        // abbreviation is exactly 3 letters.
+        let lower = t.to_ascii_lowercase();
+        let stem = match lower.as_str() {
+            "sept" => "sep",
+            other => other,
+        };
+        match stem {
+            "jan" => Some(1),
+            "feb" => Some(2),
+            "mar" => Some(3),
+            "apr" => Some(4),
+            "may" => Some(5),
+            "jun" => Some(6),
+            "jul" => Some(7),
+            "aug" => Some(8),
+            "sep" => Some(9),
+            "oct" => Some(10),
+            "nov" => Some(11),
+            "dec" => Some(12),
+            _ => None,
+        }
+    };
+    // Tolerate trailing punctuation ("Sept. 7, 2024", "7 Sep., 2024").
+    let tokens: Vec<&str> = text
+        .split_whitespace()
+        .map(|t| t.trim_end_matches(['.', ',']))
+        .collect();
+    if tokens.len() != 3 {
+        return None;
+    }
+    // Month token is first ("Sept 7 2024") or second ("7 Sep 2024").
+    for (idx, tok) in tokens.iter().enumerate() {
+        let Some(month) = month_of(tok).or_else(|| abbr_of(tok)) else {
+            continue;
+        };
+        if idx == 0 {
+            let day: u32 = tokens[1].parse().ok()?;
+            let year: i32 = tokens[2].parse().ok()?;
+            return chrono::NaiveDate::from_ymd_opt(year, month, day);
+        }
+        if idx == 1 {
+            let day: u32 = tokens[0].parse().ok()?;
+            let year: i32 = tokens[2].parse().ok()?;
+            return chrono::NaiveDate::from_ymd_opt(year, month, day);
+        }
+    }
+    None
+}
+
+/// Extract the game date from the file name, which follows the
+/// `[WFTDA]STATS-YYYY-MM-DD_{league}_{team}_vs_...xlsx` convention.
+fn date_from_file_name(file_name: &str) -> Option<chrono::NaiveDate> {
+    let marker = "STATS-";
+    let start = file_name.find(marker)? + marker.len();
+    let date_str = file_name.get(start..start + 10)?;
+    chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok()
 }
 
 /// Read the official final score from the IGRF sheet's TOTAL POINTS row (row 38 in Excel, row 37 0-indexed).
@@ -303,9 +450,19 @@ fn parse_team<R: std::io::Read + std::io::Seek>(
 ) -> Result<TeamData> {
     let sheet = wb.worksheet_range("IGRF").context("no IGRF sheet")?;
     let meta_col = if num_col == 1 { 1u32 } else { 8u32 };
-    let league = cell_str(&sheet, 9, meta_col);
-    let team = cell_str(&sheet, 10, meta_col);
+    let mut league = cell_str(&sheet, 9, meta_col);
+    let mut team = cell_str(&sheet, 10, meta_col);
     let color = cell_str(&sheet, 11, meta_col);
+    // Some uploaders fill in only one of the two header cells (the single-team
+    // convention); recover the missing value from the other. If both are blank
+    // the side stays anonymous and the game can't be fingerprinted — that's
+    // an unrecoverable statsbook, not a case to guess about.
+    if team.is_none() {
+        team = league.clone();
+    }
+    if league.is_none() {
+        league = team.clone();
+    }
     let mut skaters = Vec::new();
     // Some statsbooks list the same skater number twice in the roster (e.g.
     // Copenhagen B vs Rolling Rat Pack 2024-05-25 has #390 twice). A number is
@@ -971,5 +1128,90 @@ fn cell_opt_f32(sheet: &Range<Data>, row: u32, col: u32) -> Option<f32> {
         Data::Float(f) => Some(*f as f32),
         Data::Int(i) => Some(*i as f32),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn d(y: i32, m: u32, day: u32) -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    #[test]
+    fn test_parse_text_date_iso_and_slashes() {
+        assert_eq!(
+            parse_text_date("2026-06-27\t\t\t\t", None),
+            Some(d(2026, 6, 27))
+        );
+        assert_eq!(parse_text_date("2026-06-27", None), Some(d(2026, 6, 27)));
+        assert_eq!(parse_text_date("2025/02/08", None), Some(d(2025, 2, 8)));
+    }
+
+    #[test]
+    fn test_parse_text_date_month_names() {
+        // "Sept" is a common abbreviation chrono doesn't recognize.
+        assert_eq!(parse_text_date("Sept 7 2024", None), Some(d(2024, 9, 7)));
+        assert_eq!(
+            parse_text_date("September 7 2024", None),
+            Some(d(2024, 9, 7))
+        );
+        assert_eq!(parse_text_date("7 Sep 2024", None), Some(d(2024, 9, 7)));
+        assert_eq!(
+            parse_text_date("7 September 2024", None),
+            Some(d(2024, 9, 7))
+        );
+        // Trailing punctuation must be tolerated.
+        assert_eq!(parse_text_date("Sept. 7, 2024", None), Some(d(2024, 9, 7)));
+    }
+
+    #[test]
+    fn test_parse_text_date_ambiguous_slash() {
+        // 08/06/2024: Aug 6 (month-first) or Jun 8 (day-first).
+        assert_eq!(parse_text_date("08/06/2024", None), Some(d(2024, 8, 6)));
+        // The file-name date disambiguates: ISO file dates match the day-first
+        // reading here.
+        assert_eq!(
+            parse_text_date("08/06/2024", Some(d(2024, 6, 8))),
+            Some(d(2024, 6, 8))
+        );
+        // ...and the month-first reading when the file name agrees with it.
+        assert_eq!(
+            parse_text_date("08/06/2024", Some(d(2024, 8, 6))),
+            Some(d(2024, 8, 6))
+        );
+    }
+
+    #[test]
+    fn test_parse_text_date_garbage() {
+        assert_eq!(parse_text_date("not a date", None), None);
+        assert_eq!(parse_text_date("", None), None);
+        assert_eq!(parse_text_date("13/13/2024", None), None);
+        // 2-digit years would parse as AD 2-99 and future years are impossible;
+        // both must be rejected so the file-name date fallback can fire.
+        assert_eq!(parse_text_date("08/06/24", None), None);
+        assert_eq!(parse_text_date("Sept 7 24", None), None);
+        assert_eq!(parse_text_date("08/06/2200", None), None);
+    }
+
+    #[test]
+    fn test_date_from_file_name() {
+        assert_eq!(
+            date_from_file_name(
+                "[WFTDA]STATS-2024-09-28_AuldReekieRollerDerby_AuldReekieRollerDerbyB_vs_LondonRollerDerby_BatterCPower"
+            ),
+            Some(d(2024, 9, 28))
+        );
+        assert_eq!(
+            date_from_file_name(
+                "[WFTDA]STATS-2026-06-27_ConnecticutRollerDerby_YankeeBrutals_vs_FreeStateRollerDerby_RockVillians"
+            ),
+            Some(d(2026, 6, 27))
+        );
+        // No marker, or a truncated/non-date string after the marker.
+        assert_eq!(date_from_file_name("2024-09-28.xlsx"), None);
+        assert_eq!(date_from_file_name("[WFTDA]STATS-24-09-28_...xlsx"), None);
+        assert_eq!(date_from_file_name("[WFTDA]STATS"), None);
     }
 }

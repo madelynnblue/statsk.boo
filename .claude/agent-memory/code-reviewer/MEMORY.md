@@ -1,3 +1,4 @@
 - [sqlx UNION nullability override](feedback_sqlx_union_nullability.md) — UNION ALL forces sqlx to infer Option; use `as "col!: Type"` instead of `unwrap_or_default()` on PK/NOT-NULL columns
 - [Parser version bumps for ingest re-parse](project_parser_version_bumps.md) — when a parse.rs diff includes parsing logic changes (not just denormalization columns), PARSER_VERSION must be bumped so reingest_stale picks up affected rows
 - [CockroachDB JSONB indexing rules](feedback_cockroach_jsonb_indexes.md) — B-tree on JSONB is silently accepted but NOT used for equality (full scan); use `USING GIN`, both `=` and `@>` work
+- [chrono %Y 2-digit-year quirk](project_chrono_pct_y_quirk.md) — "%m/%d/%Y" parses "08/06/24" as year 24 AD, not 2024; date parsing needs a year sanity range

@@ -107,6 +107,53 @@ const FIXTURES: &[Fixture] = &[
         summary_players: (13, 13),
         scores: (25, 331),
     },
+    // Regression test: this statsbook's IGRF date cell is a text string
+    // ("2026-06-27\t\t\t\t") instead of a real Excel date, which used to leave
+    // the game undated and un-fingerprintable. The parser must parse text dates.
+    Fixture {
+        path: "connecticut-yankee-brutals.xlsx",
+        period_count: 2,
+        jam_counts: &[21, 21],
+        star_pass_counts: &[5, 3],
+        penalties: 38,
+        summary_players: (15, 15),
+        scores: (158, 114),
+    },
+    // Regression test: the away TEAM cell is blank in this statsbook's IGRF
+    // (the single-team convention), which used to make the away side
+    // anonymous and un-fingerprintable. The team must fall back to the league.
+    Fixture {
+        path: "brussels-ladrache.xlsx",
+        period_count: 2,
+        jam_counts: &[17, 12],
+        star_pass_counts: &[6, 6],
+        penalties: 66,
+        summary_players: (15, 14),
+        scores: (194, 57),
+    },
+    // Regression test: the home LEAGUE cell is blank in this statsbook's IGRF.
+    // The league must fall back to the team.
+    Fixture {
+        path: "tulsa-elite.xlsx",
+        period_count: 2,
+        jam_counts: &[23, 24],
+        star_pass_counts: &[4, 6],
+        penalties: 35,
+        summary_players: (13, 15),
+        scores: (50, 233),
+    },
+    // Regression test: this statsbook's IGRF date cell is completely blank
+    // ("ENTER DATE ON IGRF TAB!" in the Game Summary header). The date must be
+    // recovered from the `[WFTDA]STATS-YYYY-MM-DD_...` file name.
+    Fixture {
+        path: "auld-reekie-b.xlsx",
+        period_count: 2,
+        jam_counts: &[21, 20],
+        star_pass_counts: &[6, 3],
+        penalties: 46,
+        summary_players: (4, 4),
+        scores: (93, 156),
+    },
 ];
 
 fn parse_fixture(path: &str) -> GameData {
@@ -239,4 +286,121 @@ fn test_fixture_summary_totals() {
     let fefe = gs.home_players.iter().find(|p| p.number == "2150").unwrap();
     assert_eq!(fefe.jams_jammer, Some(10));
     assert_eq!(fefe.jams_total, Some(10));
+}
+
+/// Blank team/league IGRF header cells must fall back to the other value so
+/// the side keeps its identity (required for fingerprinting).
+#[test]
+fn test_blank_team_league_fallback() {
+    use wsb::ingest::parse::parse_statsbook;
+
+    // Away TEAM blank -> team becomes the league.
+    let game = parse_statsbook(&std::fs::read("tests/fixtures/brussels-ladrache.xlsx").unwrap())
+        .expect("parse failed");
+    assert_eq!(
+        game.away.team.as_deref(),
+        Some("Sheffield Steel Roller Derby")
+    );
+    assert_eq!(
+        game.away.league.as_deref(),
+        Some("Sheffield Steel Roller Derby")
+    );
+
+    // Home LEAGUE blank -> league becomes the team.
+    let game = parse_statsbook(&std::fs::read("tests/fixtures/tulsa-elite.xlsx").unwrap())
+        .expect("parse failed");
+    assert_eq!(game.home.league.as_deref(), Some("TULSA ELITE"));
+    assert_eq!(game.home.team.as_deref(), Some("TULSA ELITE"));
+}
+
+/// A date typed as text in the IGRF date cell must be parsed (Connecticut
+/// stores "2026-06-27\t\t\t\t" as a string).
+#[test]
+fn test_text_igrf_date() {
+    use wsb::ingest::parse::parse_statsbook_with_date;
+
+    let bytes = std::fs::read("tests/fixtures/connecticut-yankee-brutals.xlsx").unwrap();
+    let (_, date) = parse_statsbook_with_date(&bytes, None).expect("parse failed");
+    assert_eq!(
+        date,
+        Some(chrono::NaiveDate::from_ymd_opt(2026, 6, 27).unwrap())
+    );
+}
+
+/// A blank IGRF date cell must fall back to the date in the file name
+/// (Auld Reekie's Game Summary header literally says "ENTER DATE ON IGRF TAB!").
+#[test]
+fn test_file_name_date_fallback() {
+    use wsb::ingest::parse::parse_statsbook_with_date;
+
+    let bytes = std::fs::read("tests/fixtures/auld-reekie-b.xlsx").unwrap();
+
+    // Without a file name there is nowhere to get the date.
+    let (_, date) = parse_statsbook_with_date(&bytes, None).expect("parse failed");
+    assert_eq!(date, None);
+
+    // With the statsbook's file name, the date comes from the name.
+    let (_, date) = parse_statsbook_with_date(
+        &bytes,
+        Some(
+            "[WFTDA]STATS-2024-09-28_AuldReekieRollerDerby_AuldReekieRollerDerbyB_vs_LondonRollerDerby_BatterCPower",
+        ),
+    )
+    .expect("parse failed");
+    assert_eq!(
+        date,
+        Some(chrono::NaiveDate::from_ymd_opt(2024, 9, 28).unwrap())
+    );
+}
+
+/// A real Excel date in the IGRF cell is authoritative: it wins even when the
+/// file name carries a (wrong) different date, and no fallbacks run.
+#[test]
+fn test_cached_excel_date_used_first() {
+    use wsb::ingest::parse::parse_statsbook_with_date;
+
+    let bytes = std::fs::read("tests/fixtures/brussels-ladrache.xlsx").unwrap();
+    let (_, date) = parse_statsbook_with_date(&bytes, Some("[WFTDA]STATS-1999-01-01_wrong_name"))
+        .expect("parse failed");
+    assert_eq!(
+        date,
+        Some(chrono::NaiveDate::from_ymd_opt(2024, 10, 26).unwrap())
+    );
+}
+
+/// The end-to-end point of the header fallbacks: these statsbooks used to be
+/// skipped by the ingester because build_fingerprint failed on a blank or
+/// text-typed IGRF header. Now they must produce a fingerprint.
+#[test]
+fn test_recovered_games_build_fingerprints() {
+    use wsb::ingest::parse::parse_statsbook_with_date;
+
+    // (fixture, real Drive file name — Auld Reekie needs it for the date).
+    let fixtures = [
+        (
+            "tests/fixtures/connecticut-yankee-brutals.xlsx",
+            "[WFTDA]STATS-2026-06-27_ConnecticutRollerDerby_YankeeBrutals_vs_FreeStateRollerDerby_RockVillians",
+        ),
+        (
+            "tests/fixtures/brussels-ladrache.xlsx",
+            "[WFTDA]STATS-2024-10-26_BrusselsRollerDerby_LaDrache_vs_SheffieldSteelRollerDerby",
+        ),
+        (
+            "tests/fixtures/tulsa-elite.xlsx",
+            "[WFTDA]STATS-2023-05-06_TulsaElite_vs_CapitalCityCrushers",
+        ),
+        (
+            "tests/fixtures/auld-reekie-b.xlsx",
+            "[WFTDA]STATS-2024-09-28_AuldReekieRollerDerby_AuldReekieRollerDerbyB_vs_LondonRollerDerby_BatterCPower",
+        ),
+    ];
+    for (path, name) in fixtures {
+        let bytes = std::fs::read(path).unwrap();
+        let (game, date) = parse_statsbook_with_date(&bytes, Some(name)).expect("parse failed");
+        let fp = wsb::ingest::build_fingerprint(&game, date)
+            .unwrap_or_else(|e| panic!("{path}: cannot build fingerprint: {e}"));
+        // build_fingerprint succeeding already proves every identity field is
+        // present; canonical_id is the downstream consumer of that identity.
+        assert!(!wsb::ingest::compute_canonical_id(&fp).is_empty(), "{path}");
+    }
 }
