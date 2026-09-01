@@ -94,6 +94,19 @@ const FIXTURES: &[Fixture] = &[
         summary_players: (15, 15),
         scores: (202, 88),
     },
+    // Regression test: the IGRF roster in this statsbook lists skater #390
+    // "Falke" twice (rows 21 and 30), which used to produce two game_skaters
+    // rows with the same (side, number) primary key and fail the batch INSERT
+    // with a unique violation, dropping the whole game from ingest.
+    Fixture {
+        path: "copenhagen-dup-roster.xlsx",
+        period_count: 2,
+        jam_counts: &[22, 22],
+        star_pass_counts: &[1, 5],
+        penalties: 39,
+        summary_players: (13, 13),
+        scores: (25, 331),
+    },
 ];
 
 fn parse_fixture(path: &str) -> GameData {
@@ -182,6 +195,29 @@ fn test_fixture_corpus() {
             "{}: away summary players",
             f.path
         );
+    }
+}
+
+#[test]
+fn test_roster_numbers_unique_per_side() {
+    // A skater number uniquely identifies a player within a side; duplicate
+    // roster rows (seen in some statsbooks) must be deduplicated by the parser,
+    // otherwise the game_skaters batch INSERT violates its (game_id, side,
+    // number) primary key and the whole game fails to ingest.
+    use std::collections::HashSet;
+    for f in FIXTURES {
+        let game = parse_fixture(f.path);
+        for (label, side) in [("home", &game.home), ("away", &game.away)] {
+            let mut seen = HashSet::new();
+            for skater in &side.skaters {
+                assert!(
+                    seen.insert(&skater.number),
+                    "{}: duplicate {label} roster number {}",
+                    f.path,
+                    skater.number
+                );
+            }
+        }
     }
 }
 

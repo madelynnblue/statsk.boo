@@ -10,7 +10,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 16;
+pub const PARSER_VERSION: i64 = 17;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes)?;
@@ -307,6 +307,11 @@ fn parse_team<R: std::io::Read + std::io::Seek>(
     let team = cell_str(&sheet, 10, meta_col);
     let color = cell_str(&sheet, 11, meta_col);
     let mut skaters = Vec::new();
+    // Some statsbooks list the same skater number twice in the roster (e.g.
+    // Copenhagen B vs Rolling Rat Pack 2024-05-25 has #390 twice). A number is
+    // the player's identity within a side, and the game_skaters table has a
+    // (game_id, side, number) primary key, so keep only the first occurrence.
+    let mut seen_numbers = HashSet::new();
     for i in 0..max_skaters {
         let row = first_row + i;
         let raw_number = match cell_str(&sheet, row, num_col) {
@@ -317,6 +322,9 @@ fn parse_team<R: std::io::Read + std::io::Seek>(
             continue;
         }
         if is_zero_jam_player(&raw_number) {
+            continue;
+        }
+        if !seen_numbers.insert(raw_number.clone()) {
             continue;
         }
         let name = cell_str(&sheet, row, name_col).unwrap_or_default();
