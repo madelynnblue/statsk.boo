@@ -115,11 +115,14 @@ pub async fn ingest_loop(cfg: Arc<Config>, pool: Arc<PgPool>, cache: Arc<Cache>)
         ))
     });
 
-    // Serializes DB transactions within this process to reduce RETRY_SERIALIZABLE
-    // conflicts: the fingerprint GIN scan reads the whole table snapshot, and concurrent
-    // writes from the same process invalidate it. Cross-process conflicts (e.g. rolling
-    // restart) are handled by CockroachDB's serializable isolation via the is_retryable
-    // retry loop in commit_file — tx_sem provides no cross-process guarantee.
+    // Serializes DB transactions within this process: no two commits run
+    // concurrently, so the ingest path never trips over its own concurrent
+    // commits. The canonical-duplicate check is a point lookup on the unique
+    // canonical_id index (no full-table scan), and no RETRY_SERIALIZABLE retries
+    // have been observed in practice, so this is cheap insurance rather than a
+    // necessity. Cross-process conflicts (e.g. rolling restart) are handled by
+    // CockroachDB's serializable isolation via the is_retryable retry loop in
+    // commit_file — tx_sem provides no cross-process guarantee.
     // `run_ingest` commits in oldest-first order so MAX(modified_time) is a monotonic
     // cursor: a crash leaves it pointing to the last committed file, and all remaining
     // files have a larger modifiedTime and will be picked up on the next run.
