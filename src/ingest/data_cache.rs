@@ -41,7 +41,7 @@ mod tests {
     use super::*;
 
     fn test_dir() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("wsb-cache-test-{}", std::process::id()))
+        std::env::temp_dir().join(format!("statskboo-cache-test-{}", std::process::id()))
     }
 
     #[test]

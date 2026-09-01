@@ -9,13 +9,13 @@ async fn main() -> anyhow::Result<()> {
                 .from_env_lossy(),
         )
         .init();
-    let cfg = wsb::config::Config::from_env()?;
-    let pool = wsb::db::connect(&cfg.database_url).await?;
-    wsb::db::migrate(&pool).await?;
+    let cfg = statskboo::config::Config::from_env()?;
+    let pool = statskboo::db::connect(&cfg.database_url).await?;
+    statskboo::db::migrate(&pool).await?;
 
     let cfg = std::sync::Arc::new(cfg);
     let pool = std::sync::Arc::new(pool);
-    let cache = std::sync::Arc::new(wsb::cache::Cache::new());
+    let cache = std::sync::Arc::new(statskboo::cache::Cache::new());
 
     let ingest_cfg = cfg.clone();
     let ingest_pool = pool.clone();
@@ -23,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
     // Always re-parse stale games from the on-disk cache on startup (no ingest
     // source access), then start the full ingest loop only if enabled.
     tokio::spawn(async move {
-        match wsb::ingest::reingest_stale_from_cache(
+        match statskboo::ingest::reingest_stale_from_cache(
             ingest_pool.clone(),
             ingest_cfg.game_data_dir.clone(),
         )
@@ -38,11 +38,11 @@ async fn main() -> anyhow::Result<()> {
         }
 
         if ingest_cfg.ingest_enabled {
-            wsb::ingest::ingest_loop(ingest_cfg, ingest_pool, ingest_cache).await;
+            statskboo::ingest::ingest_loop(ingest_cfg, ingest_pool, ingest_cache).await;
         } else {
             tracing::info!("ingest loop disabled (INGEST_ENABLED=false)");
         }
     });
 
-    wsb::web::serve(cfg, pool, cache).await
+    statskboo::web::serve(cfg, pool, cache).await
 }

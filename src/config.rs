@@ -81,7 +81,7 @@ mod tests {
     }
 
     fn sa_dir() -> std::path::PathBuf {
-        std::env::temp_dir().join(format!("wsb-config-test-{}", std::process::id()))
+        std::env::temp_dir().join(format!("statskboo-config-test-{}", std::process::id()))
     }
 
     #[test]

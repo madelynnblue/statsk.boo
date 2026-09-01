@@ -9,16 +9,16 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
+use statskboo::config::Config;
+use statskboo::ingest::data_cache::write_game_data;
+use statskboo::ingest::drive::{DriveClient, DriveFile};
+use statskboo::ingest::parse::parse_statsbook_with_date;
+use statskboo::ingest::{build_fingerprint, compute_canonical_id};
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tracing::info;
-use wsb::config::Config;
-use wsb::ingest::data_cache::write_game_data;
-use wsb::ingest::drive::{DriveClient, DriveFile};
-use wsb::ingest::parse::parse_statsbook_with_date;
-use wsb::ingest::{build_fingerprint, compute_canonical_id};
 
 const ZIP_ROOT: &str = "Public Stats Repository";
 

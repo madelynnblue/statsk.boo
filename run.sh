@@ -6,6 +6,6 @@ set +a
 
 # export RUST_LOG=debug
 
-cargo watch -x "run --bin wsb"
+cargo watch -x "run --bin statskboo"
 
-# cargo run --bin wsb --release
+# cargo run --bin statskboo --release

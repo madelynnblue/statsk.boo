@@ -2863,6 +2863,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
+name = "statskboo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "brotli",
+ "calamine",
+ "chrono",
+ "formualizer-common",
+ "formualizer-workbook",
+ "futures",
+ "hex",
+ "humantime",
+ "jsonwebtoken",
+ "minijinja",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "zip 8.6.0",
+]
+
+[[package]]
 name = "stringprep"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3710,35 +3739,6 @@ name = "writeable"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
-
-[[package]]
-name = "wsb"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "brotli",
- "calamine",
- "chrono",
- "formualizer-common",
- "formualizer-workbook",
- "futures",
- "hex",
- "humantime",
- "jsonwebtoken",
- "minijinja",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "sqlx",
- "thiserror",
- "tokio",
- "tower",
- "tracing",
- "tracing-subscriber",
- "zip 8.6.0",
-]
 
 [[package]]
 name = "yoke"

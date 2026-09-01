@@ -1,4 +1,4 @@
-use wsb::models::GameData;
+use statskboo::models::GameData;
 
 /// A statsbook fixture with expected parse results.
 ///
@@ -159,7 +159,7 @@ const FIXTURES: &[Fixture] = &[
 fn parse_fixture(path: &str) -> GameData {
     let full = format!("tests/fixtures/{}", path);
     let bytes = std::fs::read(&full).unwrap_or_else(|e| panic!("read {}: {}", full, e));
-    wsb::ingest::parse::parse_statsbook(&bytes).expect("parse failed")
+    statskboo::ingest::parse::parse_statsbook(&bytes).expect("parse failed")
 }
 
 #[test]
@@ -292,7 +292,7 @@ fn test_fixture_summary_totals() {
 /// the side keeps its identity (required for fingerprinting).
 #[test]
 fn test_blank_team_league_fallback() {
-    use wsb::ingest::parse::parse_statsbook;
+    use statskboo::ingest::parse::parse_statsbook;
 
     // Away TEAM blank -> team becomes the league.
     let game = parse_statsbook(&std::fs::read("tests/fixtures/brussels-ladrache.xlsx").unwrap())
@@ -317,7 +317,7 @@ fn test_blank_team_league_fallback() {
 /// stores "2026-06-27\t\t\t\t" as a string).
 #[test]
 fn test_text_igrf_date() {
-    use wsb::ingest::parse::parse_statsbook_with_date;
+    use statskboo::ingest::parse::parse_statsbook_with_date;
 
     let bytes = std::fs::read("tests/fixtures/connecticut-yankee-brutals.xlsx").unwrap();
     let (_, date) = parse_statsbook_with_date(&bytes, None).expect("parse failed");
@@ -331,7 +331,7 @@ fn test_text_igrf_date() {
 /// (Auld Reekie's Game Summary header literally says "ENTER DATE ON IGRF TAB!").
 #[test]
 fn test_file_name_date_fallback() {
-    use wsb::ingest::parse::parse_statsbook_with_date;
+    use statskboo::ingest::parse::parse_statsbook_with_date;
 
     let bytes = std::fs::read("tests/fixtures/auld-reekie-b.xlsx").unwrap();
 
@@ -357,7 +357,7 @@ fn test_file_name_date_fallback() {
 /// file name carries a (wrong) different date, and no fallbacks run.
 #[test]
 fn test_cached_excel_date_used_first() {
-    use wsb::ingest::parse::parse_statsbook_with_date;
+    use statskboo::ingest::parse::parse_statsbook_with_date;
 
     let bytes = std::fs::read("tests/fixtures/brussels-ladrache.xlsx").unwrap();
     let (_, date) = parse_statsbook_with_date(&bytes, Some("[WFTDA]STATS-1999-01-01_wrong_name"))
@@ -373,7 +373,7 @@ fn test_cached_excel_date_used_first() {
 /// text-typed IGRF header. Now they must produce a fingerprint.
 #[test]
 fn test_recovered_games_build_fingerprints() {
-    use wsb::ingest::parse::parse_statsbook_with_date;
+    use statskboo::ingest::parse::parse_statsbook_with_date;
 
     // (fixture, real Drive file name — Auld Reekie needs it for the date).
     let fixtures = [
@@ -397,10 +397,13 @@ fn test_recovered_games_build_fingerprints() {
     for (path, name) in fixtures {
         let bytes = std::fs::read(path).unwrap();
         let (game, date) = parse_statsbook_with_date(&bytes, Some(name)).expect("parse failed");
-        let fp = wsb::ingest::build_fingerprint(&game, date)
+        let fp = statskboo::ingest::build_fingerprint(&game, date)
             .unwrap_or_else(|e| panic!("{path}: cannot build fingerprint: {e}"));
         // build_fingerprint succeeding already proves every identity field is
         // present; canonical_id is the downstream consumer of that identity.
-        assert!(!wsb::ingest::compute_canonical_id(&fp).is_empty(), "{path}");
+        assert!(
+            !statskboo::ingest::compute_canonical_id(&fp).is_empty(),
+            "{path}"
+        );
     }
 }

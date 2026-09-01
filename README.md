@@ -24,7 +24,7 @@ The app talks to the Google Drive API as a **service account** (OAuth2 JWT beare
 **Create the service account (one-time, GCP console):**
 
 1. https://console.cloud.google.com/iam-admin/serviceaccounts — pick or create a project.
-2. **Create service account** → name it (e.g. `wsb-ingest`) → create.
+2. **Create service account** → name it (e.g. `statskboo-ingest`) → create.
 3. Keys tab → **Add key → Create new key → JSON** → download the key file.
 4. Enable the Drive API on the project: https://console.cloud.google.com/apis/library/drive.googleapis.com
 5. No folder sharing is needed — the WFTDA repo folder is public ("anyone with the link"). If requests ever come back 404, share the folder with the service account email (`<name>@<project>.iam.gserviceaccount.com`) in Google Drive as a fallback.
@@ -41,13 +41,13 @@ The app talks to the Google Drive API as a **service account** (OAuth2 JWT beare
 ```bash
 docker run -d --name cockroach -p 26257:26257 -p 8081:8080 \
   cockroachdb/cockroach:latest start-single-node --insecure
-docker exec cockroach cockroach sql --insecure -e "CREATE DATABASE wsb;"
+docker exec cockroach cockroach sql --insecure -e "CREATE DATABASE statskboo;"
 ```
 
 **2. Create `.env`:**
 
 ```bash
-DATABASE_URL=postgresql://root@localhost:26257/wsb?sslmode=disable
+DATABASE_URL=postgresql://root@localhost:26257/statskboo?sslmode=disable
 GOOGLE_SERVICE_ACCOUNT_PATH=/path/to/wftda-sa.json
 # or, for a local directory of xlsx files instead of Drive:
 # INGEST_DIR=/path/to/xlsx/files
@@ -84,7 +84,7 @@ cargo test               # all tests
 cargo test -- test_parse # single test by name
 ```
 
-Because SQL queries are validated at compile time via `sqlx::query!`, a running CockroachDB instance with the `wsb` schema applied is required to compile.
+Because SQL queries are validated at compile time via `sqlx::query!`, a running CockroachDB instance with the `statskboo` schema applied is required to compile.
 
 For offline builds (e.g. Docker), use the checked-in `.sqlx` query cache:
 
@@ -95,9 +95,9 @@ SQLX_OFFLINE=true cargo build
 ## Docker
 
 ```bash
-docker build -t wsb .
+docker build -t statskboo .
 docker run -e DATABASE_URL=... -e GOOGLE_SERVICE_ACCOUNT_PATH=... \
-  -v /path/to/wftda-sa.json:/data/sa.json:ro -p 8080:8080 wsb
+  -v /path/to/wftda-sa.json:/data/sa.json:ro -p 8080:8080 statskboo
 ```
 
 The Dockerfile uses `SQLX_OFFLINE=true` so no database is needed at image build time.
@@ -142,9 +142,9 @@ CockroachDB, accessed via sqlx. Migrations run automatically on startup.
 
 ```bash
 # Run SQL directly
-docker exec cockroach cockroach sql --insecure -d wsb -e "<sql>"
+docker exec cockroach cockroach sql --insecure -d statskboo -e "<sql>"
 
 # Drop and recreate dev database
 docker exec cockroach cockroach sql --insecure -e \
-  "DROP DATABASE IF EXISTS wsb; CREATE DATABASE wsb;"
+  "DROP DATABASE IF EXISTS statskboo; CREATE DATABASE statskboo;"
 ```

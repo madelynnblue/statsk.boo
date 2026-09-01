@@ -17,13 +17,13 @@ CockroachDB runs locally in a Docker container named `cockroachdb`. The `cockroa
 
 ```bash
 # Run SQL (uses .env DATABASE_URL's database name)
-docker exec cockroachdb cockroach sql --insecure -d wsb -e "<sql>"
+docker exec cockroachdb cockroach sql --insecure -d statskboo -e "<sql>"
 
 # Drop and recreate the dev database
-docker exec cockroachdb cockroach sql --insecure -e "DROP DATABASE IF EXISTS wsb; CREATE DATABASE wsb;"
+docker exec cockroachdb cockroach sql --insecure -e "DROP DATABASE IF EXISTS statskboo; CREATE DATABASE statskboo;"
 
 # Recreate DB (reads DATABASE_URL from .env)
-source .env && docker exec cockroachdb cockroach sql --insecure -e "DROP DATABASE IF EXISTS wsb; CREATE DATABASE wsb;"
+source .env && docker exec cockroachdb cockroach sql --insecure -e "DROP DATABASE IF EXISTS statskboo; CREATE DATABASE statskboo;"
 ```
 
 After adding, removing, or changing any `sqlx::query!` call, regenerate the compile-time query metadata:
@@ -38,7 +38,7 @@ This updates the `.sqlx/` directory. Commit the result alongside the query chang
 
 statsk.boo (WFTDA StatsBook Browser) downloads WFTDA statsbook `.xlsx` files from a public Google Drive folder, parses them, stores the data in CockroachDB as JSONB, and serves searchable player/team/game pages.
 
-**Runtime model:** Single Tokio binary. `main.rs` spawns a background ingest loop (`wsb::ingest::ingest_loop`) that polls Google Drive on a configurable interval, then starts the Axum web server. Both share `Arc<PgPool>` and `Arc<Config>`.
+**Runtime model:** Single Tokio binary. `main.rs` spawns a background ingest loop (`statskboo::ingest::ingest_loop`) that polls Google Drive on a configurable interval, then starts the Axum web server. Both share `Arc<PgPool>` and `Arc<Config>`.
 
 **Identity:**
 - Player = `(league, name, number)` triple — all three together are the identity
@@ -52,7 +52,7 @@ statsk.boo (WFTDA StatsBook Browser) downloads WFTDA statsbook `.xlsx` files fro
 - `game_summary` (`game_id FK`, `side`, `stats JSONB`)
 - Search uses GIN trigram indexes (`pg_trgm`) on name/league/team/tournament/venue columns — no materialized views
 
-**SQL queries:** All use compile-time `sqlx::query!` macros, which validate SQL against the live database schema at build time. A running CockroachDB instance with the `wsb` schema applied is required to compile.
+**SQL queries:** All use compile-time `sqlx::query!` macros, which validate SQL against the live database schema at build time. A running CockroachDB instance with the `statskboo` schema applied is required to compile.
 
 **Migrations:** `sqlx::migrate!("./migrations").set_locking(false)` — locking is disabled because CockroachDB doesn't support PostgreSQL advisory locks.
 

@@ -10,9 +10,9 @@ RUN mkdir -p src && \
     printf 'fn main(){}' > src/main.rs && \
     SQLX_OFFLINE=true cargo build --release --locked && \
     rm -rf src \
-           target/release/.fingerprint/wsb-* \
-           target/release/deps/libwsb-* \
-           target/release/wsb
+           target/release/.fingerprint/statskboo-* \
+           target/release/deps/libstatskboo-* \
+           target/release/statskboo
 
 # Copy application source. Migrations and templates are embedded at compile time
 # by sqlx::migrate! and include_str!, so they must be present during the build.
@@ -29,8 +29,8 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/target/release/wsb /usr/local/bin/wsb
+COPY --from=builder /app/target/release/statskboo /usr/local/bin/statskboo
 COPY --from=builder /app/target/release/backfill_from_zip /usr/local/bin/backfill_from_zip
 
 EXPOSE 8080
-CMD ["wsb"]
+CMD ["statskboo"]
