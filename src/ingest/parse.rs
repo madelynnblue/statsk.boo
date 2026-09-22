@@ -11,7 +11,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 18;
+pub const PARSER_VERSION: i64 = 19;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes, None)?;
@@ -36,6 +36,7 @@ pub fn parse_statsbook_with_date(
     let mut away = parse_team(&mut wb, 8, 9, 13, 20)?;
     let mut periods = parse_scores(&mut wb)?;
     merge_lineups(&mut wb, &mut periods)?;
+    let has_jams = periods.iter().any(|p| !p.jams.is_empty());
     let home_players = players_in_jams(&periods, Side::Home);
     let away_players = players_in_jams(&periods, Side::Away);
     home.skaters.retain(|s| home_players.contains(&s.number));
@@ -51,23 +52,32 @@ pub fn parse_statsbook_with_date(
     // fill in the SP* (opposing-team star pass) rows with jammer numbers, so
     // only fall back to formula evaluation when the cached sheet is blank
     // (files saved without calculating, e.g. the standbys-flatiron fixture).
+    //
+    // A statsbook with no recorded jams has no meaningful summary: its cached
+    // sheet is all zeros, and re-evaluating the formulas fabricates jam counts
+    // out of the blank Lineups cells (the empty Beast Brawl statsbook in issue
+    // #3 produced 228/255/912). Only consult the summary once jams exist.
     let gs_cached = wb.worksheet_range("Game Summary").ok();
 
-    let game_summary = parse_game_summary(
-        &mut wb,
-        &igrf,
-        &home_players,
-        &away_players,
-        &home_jam_counts,
-        &away_jam_counts,
-    )
-    .ok()
-    .filter(|gs| {
-        gs.home_totals.jams_total.unwrap_or(0) > 0 && gs.away_totals.jams_total.unwrap_or(0) > 0
-    })
-    .or_else(|| {
-        parse_game_summary_formualizer(bytes, &home_players, &away_players, gs_cached.as_ref())
-    });
+    let game_summary = if has_jams {
+        parse_game_summary(
+            &mut wb,
+            &igrf,
+            &home_players,
+            &away_players,
+            &home_jam_counts,
+            &away_jam_counts,
+        )
+        .ok()
+        .filter(|gs| {
+            gs.home_totals.jams_total.unwrap_or(0) > 0 && gs.away_totals.jams_total.unwrap_or(0) > 0
+        })
+        .or_else(|| {
+            parse_game_summary_formualizer(bytes, &home_players, &away_players, gs_cached.as_ref())
+        })
+    } else {
+        None
+    };
 
     let (home_score, away_score) = parse_igrf_scores(&mut wb).unwrap_or_else(|| {
         (
@@ -89,6 +99,17 @@ pub fn parse_statsbook_with_date(
         away_score,
     };
     Ok((game, date))
+}
+
+/// True when a statsbook contains no game data at all: no jams, no penalties,
+/// and a 0–0 score. Such files are unfilled placeholders (rosters and metadata
+/// filled in, nothing recorded) rather than games, and must not be ingested:
+/// they render as a broken 0–0 page with no players (issue #3).
+pub fn has_no_game_data(game: &GameData) -> bool {
+    game.periods.iter().all(|p| p.jams.is_empty())
+        && game.penalties.is_empty()
+        && game.home_score == 0
+        && game.away_score == 0
 }
 
 /// A `*` after a player number in the IGRF roster means they played 0 jams.

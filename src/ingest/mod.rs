@@ -300,6 +300,14 @@ async fn prepare_file(
     let (game, date) = parse::parse_statsbook_with_date(&bytes, Some(&file.name))
         .map_err(|e| anyhow::anyhow!("parse error in {}: {e:#}", file.name))?;
 
+    if parse::has_no_game_data(&game) {
+        info!(
+            "skipping {}: statsbook has no recorded game data",
+            file.name
+        );
+        return Ok(None);
+    }
+
     if let Some(ref d) = date {
         let tomorrow = chrono::Utc::now().date_naive() + chrono::Duration::days(1);
         if *d > tomorrow {
@@ -589,6 +597,25 @@ async fn insert_parsed_file(
     };
     let (game, date) = parse::parse_statsbook_with_date(&bytes, Some(file_name))
         .map_err(|e| anyhow::anyhow!("parse error in {file_name}: {e:#}"))?;
+
+    // A statsbook with no recorded game data is an unfilled placeholder, not a
+    // game. Unlike the initial ingest path this may be re-parsing a row that was
+    // already ingested (before the parser could tell), so drop the row entirely
+    // rather than rewriting it as a broken 0–0 page (issue #3).
+    //
+    // Deleting deliberately leaves no "seen" record: the file becomes missing
+    // again, so `reconcile_missing` re-downloads and re-parses it on every
+    // startup and `run_ingest` re-checks it on every poll while it is in the
+    // modified-time window. An uploader who later fixes the statsbook on Drive
+    // (new modifiedTime, same file id) is therefore ingested automatically — a
+    // fixed game must never be permanently blacklisted.
+    if parse::has_no_game_data(&game) {
+        info!("removing {file_name}: statsbook has no recorded game data");
+        sqlx::query!("DELETE FROM games WHERE id = $1", file_id)
+            .execute(pool)
+            .await?;
+        return Ok(());
+    }
 
     if let Some(ref d) = date {
         let tomorrow = chrono::Utc::now().date_naive() + chrono::Duration::days(1);

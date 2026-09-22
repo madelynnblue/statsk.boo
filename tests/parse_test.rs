@@ -167,6 +167,14 @@ fn test_fixture_corpus() {
     for f in FIXTURES {
         let game = parse_fixture(f.path);
 
+        // Every real fixture must have game data; the empty-statsbook guard
+        // that skips unfilled placeholders must not misfire on a played game.
+        assert!(
+            !statskboo::ingest::parse::has_no_game_data(&game),
+            "{}: real fixture detected as empty",
+            f.path
+        );
+
         // Rosters
         assert!(
             !game.home.skaters.is_empty(),
@@ -406,4 +414,27 @@ fn test_recovered_games_build_fingerprints() {
             "{path}"
         );
     }
+}
+
+/// A statsbook whose rosters and metadata are filled in but which recorded no
+/// jams, no penalties, and a 0–0 score is an unfilled placeholder, not a game
+/// (issue #3). The ingester skips these via `has_no_game_data`.
+#[test]
+fn test_empty_statsbook_has_no_game_data() {
+    use statskboo::ingest::parse::{has_no_game_data, parse_statsbook};
+
+    let bytes = std::fs::read("tests/fixtures/hulagans-vendolls-empty.xlsx").unwrap();
+    let game = parse_statsbook(&bytes).expect("parse failed");
+
+    assert!(has_no_game_data(&game), "empty statsbook not detected");
+    assert_eq!(game.home_score, 0);
+    assert_eq!(game.away_score, 0);
+    assert!(game.periods.iter().all(|p| p.jams.is_empty()));
+    assert!(game.penalties.is_empty());
+    // The Game Summary must not be fabricated from blank Lineups formulas:
+    // formualizer used to report 228 pivot / 255 blocker / 912 total jams here.
+    assert!(
+        game.game_summary.is_none(),
+        "empty statsbook produced a game summary"
+    );
 }
