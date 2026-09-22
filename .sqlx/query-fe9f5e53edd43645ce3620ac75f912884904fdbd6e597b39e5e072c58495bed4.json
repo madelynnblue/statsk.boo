@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO statsbook_summary (drive_file_id, side, stats) VALUES ($1, 'home', $2)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Jsonb"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fe9f5e53edd43645ce3620ac75f912884904fdbd6e597b39e5e072c58495bed4"
+}

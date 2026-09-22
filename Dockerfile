@@ -30,7 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/statskboo /usr/local/bin/statskboo
-COPY --from=builder /app/target/release/backfill_from_zip /usr/local/bin/backfill_from_zip
 
 EXPOSE 8080
-CMD ["statskboo"]
+# Use an entrypoint (not CMD) so `docker compose run --rm statskboo rekey-cache ...`
+# passes `rekey-cache` to the binary instead of trying to exec it directly.
+ENTRYPOINT ["statskboo"]

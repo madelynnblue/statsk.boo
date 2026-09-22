@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM statsbooks WHERE last_seen < $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4ceb3ebb275005353df4c64b9d959f6d42afe48ca4799b3d1597a18fa242d60e"
+}

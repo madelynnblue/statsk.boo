@@ -24,21 +24,7 @@ pub async fn serve(cfg: Arc<Config>, pool: Arc<PgPool>, cache: Arc<Cache>) -> an
         cache: cache.clone(),
     };
 
-    let app = Router::new()
-        .route("/", get(handlers::index::handle))
-        .route("/search", get(handlers::search::handle))
-        .route("/player", get(handlers::player::handle))
-        .route("/team", get(handlers::team::handle))
-        .route("/league", get(handlers::league::handle))
-        .route("/leagues", get(handlers::leagues::handle))
-        .route("/game/{canonical_id}", get(handlers::game::handle))
-        .route("/about", get(handlers::about::handle))
-        .route("/robots.txt", get(handlers::robots::handle))
-        .layer(axum::middleware::from_fn(move |req, next| {
-            let c = cache.clone();
-            async move { cache::middleware(req, next, c).await }
-        }))
-        .with_state(state);
+    let app = build_router(state);
 
     let addr: std::net::SocketAddr = cfg.bind_addr.parse()?;
     tracing::info!("listening on {addr}");
@@ -47,7 +33,29 @@ pub async fn serve(cfg: Arc<Config>, pool: Arc<PgPool>, cache: Arc<Cache>) -> an
     Ok(())
 }
 
-fn build_template_env() -> Environment<'static> {
+/// Builds the application router. Split out of [`serve`] so tests can exercise
+/// the real routes (including the cache middleware) through `tower::ServiceExt`
+/// without binding a socket.
+pub fn build_router(state: AppState) -> Router {
+    let cache = state.cache.clone();
+    Router::new()
+        .route("/", get(handlers::index::handle))
+        .route("/search", get(handlers::search::handle))
+        .route("/player", get(handlers::player::handle))
+        .route("/team/{wftda_team_id}", get(handlers::team::handle))
+        .route("/league", get(handlers::league::handle))
+        .route("/leagues", get(handlers::leagues::handle))
+        .route("/game/{wftda_game_id}", get(handlers::game::handle))
+        .route("/about", get(handlers::about::handle))
+        .route("/robots.txt", get(handlers::robots::handle))
+        .layer(axum::middleware::from_fn(move |req, next| {
+            let c = cache.clone();
+            async move { cache::middleware(req, next, c).await }
+        }))
+        .with_state(state)
+}
+
+pub fn build_template_env() -> Environment<'static> {
     let mut env = Environment::new();
     env.add_template("base.html", include_str!("../../templates/base.html"))
         .unwrap();

@@ -24,10 +24,8 @@ futures = "0.3.32"
 brotli = "8.0.2"
 formualizer-workbook = { version = "0.6.0", features = ["calamine"] }
 formualizer-common = "2.0.0"
-zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 jsonwebtoken = "9.3.0"  # pinned: v10+/v11 require selecting a crypto provider feature and panic at runtime without one; keep 9.x until a provider feature is wired in
 
 [dev-dependencies]
-formualizer-workbook = { version = "0.6.0", features = ["calamine"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.5.3"

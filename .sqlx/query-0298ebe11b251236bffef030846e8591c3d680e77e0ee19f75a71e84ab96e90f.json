@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM statsbook_summary WHERE drive_file_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0298ebe11b251236bffef030846e8591c3d680e77e0ee19f75a71e84ab96e90f"
+}

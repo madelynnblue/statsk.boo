@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO sync_state (key, value) VALUES ($1, now())\n           ON CONFLICT (key) DO UPDATE SET value = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "cee7a775d2adafdbebdd00e5a896c00500ff8e394aed77ff62d313fd8450fc2f"
+}

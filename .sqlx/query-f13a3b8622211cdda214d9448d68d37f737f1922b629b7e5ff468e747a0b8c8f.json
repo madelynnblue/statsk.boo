@@ -1,0 +1,86 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT g.drive_file_id,\n                  g.date,\n                  g.home_score,\n                  g.away_score,\n                  h.league            AS \"home_league?\",\n                  h.team              AS \"home_team?\",\n                  h.league_canonical  AS \"home_league_canonical!\",\n                  h.team_canonical    AS \"home_team_canonical!\",\n                  a.league            AS \"away_league?\",\n                  a.team              AS \"away_team?\",\n                  a.league_canonical  AS \"away_league_canonical!\",\n                  a.team_canonical    AS \"away_team_canonical!\"\n             FROM statsbook_games g\n             JOIN statsbook_sides h\n               ON h.drive_file_id = g.drive_file_id AND h.side = 'home'\n             JOIN statsbook_sides a\n               ON a.drive_file_id = g.drive_file_id AND a.side = 'away'\n             ORDER BY g.drive_file_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "drive_file_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 2,
+        "name": "home_score",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 3,
+        "name": "away_score",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 4,
+        "name": "home_league?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "home_team?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "home_league_canonical!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "home_team_canonical!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "away_league?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "away_team?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "away_league_canonical!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "away_team_canonical!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false,
+      true,
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "f13a3b8622211cdda214d9448d68d37f737f1922b629b7e5ff468e747a0b8c8f"
+}

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT side AS \"side!: String\", wftda_team_id\n                     FROM statsbook_sides\n                    WHERE drive_file_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "side!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "wftda_team_id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "8fe15964368cc0c4eb449d354db8600dbc89bf7c3d8450e974a2acec414cb867"
+}

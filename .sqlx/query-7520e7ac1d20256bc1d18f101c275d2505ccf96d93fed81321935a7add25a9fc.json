@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO statsbooks\n             (drive_file_id, name, quarter, mime_type, modified_time,\n              first_seen, last_seen, parse_status, parser_version)\n           VALUES ($1, $2, $3, $4, $5, now(), now(), 'pending', NULL)\n           ON CONFLICT (drive_file_id) DO UPDATE SET\n             name           = EXCLUDED.name,\n             quarter        = EXCLUDED.quarter,\n             mime_type      = EXCLUDED.mime_type,\n             modified_time  = EXCLUDED.modified_time,\n             last_seen      = now(),\n             -- A new or re-uploaded file needs (re-)parsing; an unchanged one\n             -- keeps whatever the parser stage already recorded.\n             parse_status   = CASE\n                 WHEN statsbooks.modified_time IS DISTINCT FROM EXCLUDED.modified_time\n                 THEN 'pending'\n                 ELSE statsbooks.parse_status\n             END,\n             parser_version = CASE\n                 WHEN statsbooks.modified_time IS DISTINCT FROM EXCLUDED.modified_time\n                 THEN NULL\n                 ELSE statsbooks.parser_version\n             END",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7520e7ac1d20256bc1d18f101c275d2505ccf96d93fed81321935a7add25a9fc"
+}

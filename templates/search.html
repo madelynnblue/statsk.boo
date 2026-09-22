@@ -13,13 +13,13 @@
   {% if players %}
   <h2>Players</h2>
   <table>
-    <thead><tr><th>Name</th><th>#</th><th>League</th></tr></thead>
+    <thead><tr><th>Name</th><th>#</th><th>Team</th></tr></thead>
     <tbody>
     {% for p in players %}
       <tr>
-        <td><a href="/player?league={{ p.league | urlencode }}&name={{ p.name | urlencode }}&number={{ p.number | urlencode }}">{{ p.name }}</a></td>
+        <td><a href="/player?team={{ p.team_id }}&name={{ p.name | urlencode }}&number={{ p.number | urlencode }}">{{ p.name }}</a></td>
         <td>{{ p.number }}</td>
-        <td><a href="/league?league={{ p.league | urlencode }}">{{ p.league }}</a></td>
+        <td><a href="/team/{{ p.team_id }}">{{ p.team_title }}</a></td>
       </tr>
     {% endfor %}
     </tbody>
@@ -33,7 +33,7 @@
     <tbody>
     {% for t in teams %}
       <tr>
-        <td><a href="/team?league={{ t.league | urlencode }}&team={{ t.team | urlencode }}">{{ t.team }}</a></td>
+        <td><a href="/team/{{ t.id }}">{{ t.title }}</a></td>
         <td><a href="/league?league={{ t.league | urlencode }}">{{ t.league }}</a></td>
       </tr>
     {% endfor %}
@@ -60,13 +60,13 @@
     <tbody>
     {% for g in games %}
       <tr>
-        <td><a href="/game/{{ g.game_id }}">{{ g.date | default("") }}</a></td>
-        <td><a href="/team?league={{ g.home_league | urlencode }}&team={{ g.home_team | urlencode }}">{{ g.home_team }}</a></td>
-        <td><a href="/team?league={{ g.away_league | urlencode }}&team={{ g.away_team | urlencode }}">{{ g.away_team }}</a></td>
+        <td><a href="/game/{{ g.wftda_game_id }}">{{ g.date }}</a></td>
+        <td><a href="/team/{{ g.home_id }}">{{ g.home_title }}</a></td>
+        <td><a href="/team/{{ g.away_id }}">{{ g.away_title }}</a></td>
         <td>{{ g.home_score }}–{{ g.away_score }}</td>
         <td>
-          {%- if g.tournament and query | lower in g.tournament | lower %}Tournament: {{ g.tournament }}{% endif -%}
-          {%- if g.venue_name and query | lower in g.venue_name | lower %}{% if g.tournament and query | lower in g.tournament | lower %}, {% endif %}Venue: {{ g.venue_name }}{% endif -%}
+          {%- if g.tournament %}Tournament: {{ g.tournament }}{% endif -%}
+          {%- if g.venue_name %}{% if g.tournament %}, {% endif %}Venue: {{ g.venue_name }}{% if g.venue_city %}, {{ g.venue_city }}{% endif %}{% if g.venue_state %}, {{ g.venue_state }}{% endif %}{% endif -%}
         </td>
       </tr>
     {% endfor %}

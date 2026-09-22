@@ -9,7 +9,7 @@
 {% if league.teams %}
 <ul>
 {% for team in league.teams %}
-  <li><a href="/team?league={{ league.league | urlencode }}&team={{ team.team | urlencode }}">{{ team.team }}</a></li>
+  <li><a href="/team/{{ team.id }}">{{ team.title }}</a></li>
 {% endfor %}
 </ul>
 {% else %}

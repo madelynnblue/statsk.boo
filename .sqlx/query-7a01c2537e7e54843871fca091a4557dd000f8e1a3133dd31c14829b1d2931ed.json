@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE game_matches\n               SET wftda_game_id = NULL, method = 'duplicate', resolved_at = now()\n               WHERE drive_file_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7a01c2537e7e54843871fca091a4557dd000f8e1a3133dd31c14829b1d2931ed"
+}

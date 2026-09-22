@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE statsbooks SET parse_status = 'parsed', parser_version = $2, parse_error = NULL WHERE drive_file_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "46bbe815e6fc6bc94276a57a76a85d919811a01878956b6817a7e7f098f5adf1"
+}

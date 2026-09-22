@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT side AS \"side!: String\", stats\n                     FROM statsbook_summary\n                    WHERE drive_file_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "side!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "stats",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "c575ba5e8f1d5bd19f0b667f91b8d01ac1a5881ee2221c6c7d1b956d1ce4ffdd"
+}

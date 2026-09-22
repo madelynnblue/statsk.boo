@@ -17,7 +17,10 @@
 {% macro fmtpct(val) %}{% if val is not none %}{{ "%.2f" | format(val * 100) }}%{% endif %}{% endmacro %}
 {% macro intz(val) %}{% if val is not none and val != 0 %}{{ val }}{% endif %}{% endmacro %}
 <h1>{{ name }} <small>#{{ number }}</small></h1>
-<p><a href="/league?league={{ league | urlencode }}">{{ league }}</a></p>
+<p>
+  <a href="/team/{{ team_id }}">{{ team_title }}</a>
+  {%- if team_slug %} · <a href="https://stats.wftda.com/team/{{ team_slug }}" target="_blank">WFTDA team page</a>{% endif %}
+</p>
 
 <h2>Career Stats</h2>
 <div class="stats-grid">
@@ -35,7 +38,7 @@
   {% for g in games %}
     <tr>
       <td><a href="/game/{{ g.game_id }}">{{ g.date }}</a></td>
-      <td><a href="/team?league={{ g.opponent_league | urlencode }}&team={{ g.opponent_team | urlencode }}">{{ g.opponent_team }}</a><br><small>{{ g.opponent_league }}</small></td>
+      <td><a href="/team/{{ g.opponent_team_id }}">{{ g.opponent_team }}</a></td>
       <td>{{ g.jams_as_jammer }}</td>
       <td>{{ g.jams_as_pivot }}</td>
       <td>{{ g.jams_as_blocker }}</td>
@@ -71,7 +74,7 @@
       {% set p = g.stats %}
       <tr>
         <td><a href="/game/{{ g.game_id }}">{{ g.date }}</a></td>
-        <td><a href="/team?league={{ g.opponent_league | urlencode }}&team={{ g.opponent_team | urlencode }}">{{ g.opponent_team }}</a><br><small>{{ g.opponent_league }}</small></td>
+        <td><a href="/team/{{ g.opponent_team_id }}">{{ g.opponent_team }}</a></td>
         <td>{{ p.jams_jammer | default("") }}</td>
         <td>{{ p.jams_pivot | default("") }}</td>
         <td>{{ p.jams_blocker | default("") }}</td>

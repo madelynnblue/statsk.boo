@@ -6,32 +6,36 @@ use std::time::Duration;
 pub struct Config {
     pub database_url: String,
     pub bind_addr: String,
-    pub ingest_interval: Duration,
-    pub ingest_jitter: Duration,
-    pub ingest_enabled: bool,
-    pub ingest_dir: Option<String>,
-    pub game_data_dir: Option<PathBuf>,
+    /// How often the WFTDA teams + results sync runs (stages 1-2).
+    pub wftda_sync_interval: Duration,
+    /// How often the Drive statsbook index runs (stage 3). Independent of, and
+    /// typically more frequent than, `wftda_sync_interval`.
+    pub drive_index_interval: Duration,
+    /// Lookback window for the incremental games sync: scan pages until the
+    /// oldest date is older than `max(known date) - lookback`
+    /// (`WFTDA_GAMES_LOOKBACK`, default 14d).
+    pub wftda_games_lookback: Duration,
+    /// How often the games sync forces a full scan, which catches retroactive
+    /// score corrections and results entered long after the game
+    /// (`WFTDA_FULL_REFRESH_INTERVAL`, default 7d).
+    pub wftda_full_refresh_interval: Duration,
+    /// Master switch for the WFTDA sync, Drive index, parse, and resolve
+    /// background tasks, so offline dev can skip them all and just serve the
+    /// web layer.
+    pub wftda_sync_enabled: bool,
     pub google_drive_folder_id: String,
+    /// Optional on-disk raw-bytes cache for downloaded statsbooks, keyed by
+    /// `drive_file_id` (`GAME_DATA_DIR`, e.g. `/data/game-data` in prod). Absent
+    /// (or empty) disables the cache and restores always-download behaviour.
+    pub game_data_dir: Option<PathBuf>,
     pub service_account: Option<Arc<crate::ingest::drive_auth::ServiceAccount>>,
 }
 
 impl Config {
     pub fn from_env() -> Result<Self> {
-        let ingest_dir = std::env::var("INGEST_DIR").ok();
-        let game_data_dir = std::env::var("GAME_DATA_DIR").ok().map(PathBuf::from);
         let sa_path = std::env::var("GOOGLE_SERVICE_ACCOUNT_PATH")
             .ok()
             .map(PathBuf::from);
-        let ingest_enabled = std::env::var("INGEST_ENABLED")
-            .map(|v| !matches!(v.to_ascii_lowercase().as_str(), "false" | "0" | "no"))
-            .unwrap_or(true);
-
-        if ingest_enabled {
-            anyhow::ensure!(
-                ingest_dir.is_some() ^ sa_path.is_some(),
-                "exactly one of INGEST_DIR or GOOGLE_SERVICE_ACCOUNT_PATH must be set"
-            );
-        }
 
         let service_account = match &sa_path {
             Some(p) => Some(Arc::new(
@@ -48,16 +52,35 @@ impl Config {
                     .map(|p| format!("0.0.0.0:{p}"))
                     .unwrap_or_else(|_| "0.0.0.0:8080".into())
             }),
-            ingest_interval: parse_duration("INGEST_INTERVAL", "24h")?,
-            ingest_jitter: parse_duration("INGEST_JITTER", "1h")?,
-            ingest_enabled,
-            ingest_dir,
-            game_data_dir,
+            wftda_sync_interval: parse_duration("WFTDA_SYNC_INTERVAL", "24h")?,
+            drive_index_interval: parse_duration("DRIVE_INDEX_INTERVAL", "24h")?,
+            wftda_games_lookback: parse_duration("WFTDA_GAMES_LOOKBACK", "14d")?,
+            wftda_full_refresh_interval: parse_duration("WFTDA_FULL_REFRESH_INTERVAL", "7d")?,
+            wftda_sync_enabled: parse_bool("WFTDA_SYNC_ENABLED", true),
             google_drive_folder_id: std::env::var("GOOGLE_DRIVE_FOLDER_ID")
                 .unwrap_or_else(|_| "1TC1QUmpIwy9NZX9DBPUPoHjkjFbbzyYr".into()),
+            // An empty GAME_DATA_DIR is treated as unset: compose leaves the var
+            // defined but empty when no cache volume is mounted.
+            game_data_dir: std::env::var("GAME_DATA_DIR")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .map(PathBuf::from),
             service_account,
         })
     }
+}
+
+/// Parses the boolean env-var convention used across the app: only the exact
+/// values `false`, `0`, and `no` (case-insensitive) are false; everything else
+/// is true.
+fn bool_from_str(v: &str) -> bool {
+    !matches!(v.to_ascii_lowercase().as_str(), "false" | "0" | "no")
+}
+
+fn parse_bool(var: &str, default: bool) -> bool {
+    std::env::var(var)
+        .map(|v| bool_from_str(&v))
+        .unwrap_or(default)
 }
 
 fn parse_duration(var: &str, default: &str) -> Result<Duration> {
@@ -88,53 +111,93 @@ mod tests {
     fn test_config_from_env() {
         unsafe {
             std::env::set_var("DATABASE_URL", "postgresql://test");
-            std::env::remove_var("INGEST_DIR");
             std::env::remove_var("GOOGLE_SERVICE_ACCOUNT_PATH");
             std::env::remove_var("BIND_ADDR");
-            std::env::remove_var("INGEST_INTERVAL");
-            std::env::remove_var("INGEST_JITTER");
-            std::env::remove_var("INGEST_ENABLED");
+            std::env::remove_var("WFTDA_SYNC_INTERVAL");
+            std::env::remove_var("DRIVE_INDEX_INTERVAL");
+            std::env::remove_var("WFTDA_GAMES_LOOKBACK");
+            std::env::remove_var("WFTDA_FULL_REFRESH_INTERVAL");
+            std::env::remove_var("WFTDA_SYNC_ENABLED");
+            std::env::remove_var("GAME_DATA_DIR");
 
-            // defaults: neither INGEST_DIR nor SA set -> error
-            assert!(Config::from_env().is_err());
-
-            // INGEST_DIR set, no SA
-            std::env::set_var("INGEST_DIR", "/tmp/xlsx");
+            // defaults: no service account is fine (the Drive loop no-ops with
+            // a warning), and both sync intervals default to daily.
             let cfg = Config::from_env().unwrap();
-            assert_eq!(cfg.ingest_dir.as_deref(), Some("/tmp/xlsx"));
             assert!(cfg.service_account.is_none());
-            assert!(cfg.ingest_enabled);
+            assert!(cfg.wftda_sync_enabled);
+            assert_eq!(cfg.wftda_sync_interval, Duration::from_secs(24 * 3600));
+            assert_eq!(cfg.drive_index_interval, Duration::from_secs(24 * 3600));
+            assert_eq!(
+                cfg.wftda_games_lookback,
+                Duration::from_secs(14 * 24 * 3600)
+            );
+            assert_eq!(
+                cfg.wftda_full_refresh_interval,
+                Duration::from_secs(7 * 24 * 3600)
+            );
+            // No GAME_DATA_DIR -> the on-disk byte cache is disabled.
+            assert!(cfg.game_data_dir.is_none());
 
-            // both INGEST_DIR and SA set -> error
+            // GAME_DATA_DIR enables the cache; the legacy compose var name is
+            // kept so a prod volume keeps working.
+            std::env::set_var("GAME_DATA_DIR", "/data/game-data");
+            assert_eq!(
+                Config::from_env().unwrap().game_data_dir,
+                Some(PathBuf::from("/data/game-data"))
+            );
+            // An empty value is treated as unset (compose may define it empty).
+            std::env::set_var("GAME_DATA_DIR", "   ");
+            assert!(Config::from_env().unwrap().game_data_dir.is_none());
+            std::env::remove_var("GAME_DATA_DIR");
+
+            // SA configured -> loaded from the JSON file
             let sa = write_sa_json(&sa_dir());
             std::env::set_var("GOOGLE_SERVICE_ACCOUNT_PATH", &sa);
-            assert!(Config::from_env().is_err());
-
-            // SA set, no INGEST_DIR
-            std::env::remove_var("INGEST_DIR");
             let cfg = Config::from_env().unwrap();
             let sa = cfg.service_account.unwrap();
             assert_eq!(sa.client_email, "t@t.iam.gserviceaccount.com");
             assert_eq!(sa.token_uri, "https://oauth2.googleapis.com/token");
 
-            // INGEST_ENABLED parsing
-            std::env::set_var("INGEST_ENABLED", "false");
-            assert!(!Config::from_env().unwrap().ingest_enabled);
-            std::env::set_var("INGEST_ENABLED", "0");
-            assert!(!Config::from_env().unwrap().ingest_enabled);
-            std::env::set_var("INGEST_ENABLED", "no");
-            assert!(!Config::from_env().unwrap().ingest_enabled);
-            std::env::set_var("INGEST_ENABLED", "FALSE");
-            assert!(!Config::from_env().unwrap().ingest_enabled);
-            std::env::set_var("INGEST_ENABLED", "No");
-            assert!(!Config::from_env().unwrap().ingest_enabled);
-            std::env::set_var("INGEST_ENABLED", "garbage");
-            assert!(Config::from_env().unwrap().ingest_enabled);
-            std::env::remove_var("INGEST_ENABLED");
-            assert!(Config::from_env().unwrap().ingest_enabled);
+            // WFTDA sync / Drive index scheduling (decision 8)
+
+            std::env::set_var("WFTDA_SYNC_INTERVAL", "6h");
+            std::env::set_var("DRIVE_INDEX_INTERVAL", "30m");
+            std::env::set_var("WFTDA_GAMES_LOOKBACK", "3d");
+            std::env::set_var("WFTDA_FULL_REFRESH_INTERVAL", "2d");
+            std::env::set_var("WFTDA_SYNC_ENABLED", "false");
+            let cfg = Config::from_env().unwrap();
+            assert_eq!(cfg.wftda_sync_interval, Duration::from_secs(6 * 3600));
+            assert_eq!(cfg.drive_index_interval, Duration::from_secs(30 * 60));
+            assert_eq!(cfg.wftda_games_lookback, Duration::from_secs(3 * 24 * 3600));
+            assert_eq!(
+                cfg.wftda_full_refresh_interval,
+                Duration::from_secs(2 * 24 * 3600)
+            );
+            assert!(!cfg.wftda_sync_enabled);
+
+            std::env::set_var("WFTDA_SYNC_ENABLED", "yes");
+            assert!(Config::from_env().unwrap().wftda_sync_enabled);
+
+            std::env::set_var("WFTDA_SYNC_INTERVAL", "not-a-duration");
+            assert!(Config::from_env().is_err());
+            std::env::remove_var("WFTDA_SYNC_INTERVAL");
+            std::env::remove_var("DRIVE_INDEX_INTERVAL");
+            std::env::remove_var("WFTDA_GAMES_LOOKBACK");
+            std::env::remove_var("WFTDA_FULL_REFRESH_INTERVAL");
+            std::env::remove_var("WFTDA_SYNC_ENABLED");
 
             std::env::remove_var("GOOGLE_SERVICE_ACCOUNT_PATH");
             std::fs::remove_dir_all(sa_dir()).ok();
+        }
+    }
+
+    #[test]
+    fn test_bool_from_str() {
+        for v in ["false", "FALSE", "False", "0", "no", "No", "NO"] {
+            assert!(!bool_from_str(v), "{v:?} should parse as false");
+        }
+        for v in ["true", "1", "yes", "garbage", ""] {
+            assert!(bool_from_str(v), "{v:?} should parse as true");
         }
     }
 }

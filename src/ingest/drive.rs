@@ -1,10 +1,8 @@
 use crate::ingest::drive_auth::ServiceAccount;
-use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use anyhow::Result;
 use reqwest::Client;
 use reqwest::header;
 use serde::Deserialize;
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -24,31 +22,6 @@ pub struct DriveFile {
     pub modified_time: String,
     #[serde(rename = "mimeType")]
     pub mime_type: Option<String>,
-}
-
-impl DriveFile {
-    pub fn from_local(path: &Path, root: &Path) -> Result<Self> {
-        let rel = path.strip_prefix(root).with_context(|| {
-            format!("path {} not under root {}", path.display(), root.display())
-        })?;
-        let id = rel.to_string_lossy().to_string();
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| id.clone());
-        let meta = std::fs::metadata(path).with_context(|| format!("stat {}", path.display()))?;
-        let mtime = meta
-            .modified()
-            .with_context(|| format!("mtime {}", path.display()))?;
-        let modified_time =
-            DateTime::<Utc>::from(mtime).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        Ok(Self {
-            id,
-            name,
-            modified_time,
-            mime_type: None,
-        })
-    }
 }
 
 #[derive(Deserialize)]
@@ -176,37 +149,17 @@ impl DriveClient {
         *self.token.lock().unwrap() = None;
     }
 
-    pub async fn list_xlsx_since(&self, folder_id: &str, since: &str) -> Result<Vec<DriveFile>> {
-        let mut all = Vec::new();
-        let subfolders = self.list_items(folder_id, true, None).await?;
-        for folder in subfolders {
-            let files = self.list_items(&folder.id, false, Some(since)).await?;
-            all.extend(files);
-        }
-        Ok(all)
-    }
-
-    pub async fn list_all_xlsx(&self, folder_id: &str) -> Result<Vec<DriveFile>> {
-        let mut all = Vec::new();
-        let subfolders = self.list_items(folder_id, true, None).await?;
-        for folder in subfolders {
-            let files = self.list_items(&folder.id, false, None).await?;
-            all.extend(files);
-        }
-        Ok(all)
-    }
-
     /// Lists files in the two-level folder tree under `folder_id` with paths
     /// relative to it, e.g. "2023-Q1/[WFTDA]STATS-....xlsx". One list query
     /// per subfolder (plus one for the subfolder listing; pagination handled
     /// internally by list_items). Files sitting directly in the root folder
     /// are not listed. Inherits the request serialization and retry logic.
-    /// Used by the zip backfill to map paths to Drive file IDs.
+    /// Used by the statsbook index (redesign stage 3).
     pub async fn list_tree_with_paths(&self, folder_id: &str) -> Result<Vec<(String, DriveFile)>> {
-        let subfolders = self.list_items(folder_id, true, None).await?;
+        let subfolders = self.list_items(folder_id, true).await?;
         let mut out = Vec::new();
         for folder in subfolders {
-            let files = self.list_items(&folder.id, false, None).await?;
+            let files = self.list_items(&folder.id, false).await?;
             for f in files {
                 out.push((format!("{}/{}", folder.name, f.name), f));
             }
@@ -214,21 +167,13 @@ impl DriveClient {
         Ok(out)
     }
 
-    async fn list_items(
-        &self,
-        folder_id: &str,
-        folders_only: bool,
-        since: Option<&str>,
-    ) -> Result<Vec<DriveFile>> {
+    async fn list_items(&self, folder_id: &str, folders_only: bool) -> Result<Vec<DriveFile>> {
         let mime = if folders_only {
             "mimeType = 'application/vnd.google-apps.folder'"
         } else {
             "mimeType != 'application/vnd.google-apps.folder'"
         };
-        let since_clause = since
-            .map(|s| format!(" and modifiedTime > '{s}'"))
-            .unwrap_or_default();
-        let q = format!("'{folder_id}' in parents and {mime}{since_clause}");
+        let q = format!("'{folder_id}' in parents and {mime}");
 
         let mut all_files = Vec::new();
         let mut page_token: Option<String> = None;
@@ -366,24 +311,6 @@ impl DriveClient {
 
 #[cfg(test)]
 mod tests {
-
-    #[test]
-    fn test_since_clause_format() {
-        let since = "2024-01-01T00:00:00Z";
-        let expected = " and modifiedTime > '2024-01-01T00:00:00Z'";
-        let clause = Some(since)
-            .map(|s| format!(" and modifiedTime > '{s}'"))
-            .unwrap_or_default();
-        assert_eq!(clause, expected);
-    }
-
-    #[test]
-    fn test_no_since_clause() {
-        let clause: String = None::<&str>
-            .map(|s| format!(" and modifiedTime > '{s}'"))
-            .unwrap_or_default();
-        assert_eq!(clause, "");
-    }
 
     #[test]
     fn test_unauthorized_is_transient() {

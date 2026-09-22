@@ -1,0 +1,76 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT g.id, g.date,\n                  g.team_1_id, g.team_2_id, g.team_1_score, g.team_2_score,\n                  t1.title AS team_1_title,\n                  t1.slug  AS \"team_1_slug?\",\n                  t2.title AS team_2_title,\n                  t2.slug  AS \"team_2_slug?\"\n             FROM wftda_games g\n             JOIN wftda_teams t1 ON t1.id = g.team_1_id\n             JOIN wftda_teams t2 ON t2.id = g.team_2_id\n            WHERE g.id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 2,
+        "name": "team_1_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "team_2_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "team_1_score",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 5,
+        "name": "team_2_score",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 6,
+        "name": "team_1_title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "team_1_slug?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
+        "name": "team_2_title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "team_2_slug?",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "119d223f41460bf966e12ad102faf0f58cd6340f26babf300f8016eeadf1a82a"
+}

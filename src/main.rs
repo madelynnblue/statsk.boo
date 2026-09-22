@@ -1,5 +1,26 @@
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // One-off maintenance subcommands run before config/DB/migration/server
+    // setup, so `statskboo rekey-cache ...` needs neither `DATABASE_URL` nor a
+    // connection to the new database (it only reads the legacy DB and rewrites
+    // files in the cache directory). Required entry point for prod, where the
+    // image ships only this binary.
+    let mut args = std::env::args();
+    let _program = args.next();
+    if let Some(subcommand) = args.next() {
+        return match subcommand.as_str() {
+            "rekey-cache" => statskboo::rekey_cache::run_cli(args).await,
+            "-h" | "--help" => {
+                println!("{}", statskboo::rekey_cache::USAGE);
+                Ok(())
+            }
+            other => Err(anyhow::anyhow!(
+                "unknown subcommand {other:?}; the only subcommand is `rekey-cache`\n\n{}",
+                statskboo::rekey_cache::USAGE
+            )),
+        };
+    }
+
     use std::io::IsTerminal;
     tracing_subscriber::fmt()
         .with_ansi(std::io::stderr().is_terminal())
@@ -17,32 +38,26 @@ async fn main() -> anyhow::Result<()> {
     let pool = std::sync::Arc::new(pool);
     let cache = std::sync::Arc::new(statskboo::cache::Cache::new());
 
-    let ingest_cfg = cfg.clone();
-    let ingest_pool = pool.clone();
-    let ingest_cache = cache.clone();
-    // Always re-parse stale games from the on-disk cache on startup (no ingest
-    // source access), then start the full ingest loop only if enabled.
-    tokio::spawn(async move {
-        match statskboo::ingest::reingest_stale_from_cache(
-            ingest_pool.clone(),
-            ingest_cfg.game_data_dir.clone(),
-        )
-        .await
-        {
-            Ok(n) if n > 0 => {
-                tracing::info!("re-ingested {n} stale game(s) from cache");
-                ingest_cache.clear();
-            }
-            Ok(_) => {}
-            Err(e) => tracing::error!("cache-only re-ingest of stale games failed: {e:#}"),
-        }
+    if cfg.wftda_sync_enabled {
+        // WFTDA reference sync (stages 1-2) and the Drive statsbook index
+        // (stage 3), parse (stage 4), and resolve (stages 5-6). The Drive loop
+        // no-ops with a warning without a service account.
+        let wftda_cfg = cfg.clone();
+        let wftda_pool = pool.clone();
+        let wftda_cache = cache.clone();
+        tokio::spawn(async move {
+            statskboo::ingest::wftda_sync_loop(wftda_cfg, wftda_pool, wftda_cache).await;
+        });
 
-        if ingest_cfg.ingest_enabled {
-            statskboo::ingest::ingest_loop(ingest_cfg, ingest_pool, ingest_cache).await;
-        } else {
-            tracing::info!("ingest loop disabled (INGEST_ENABLED=false)");
-        }
-    });
+        let drive_cfg = cfg.clone();
+        let drive_pool = pool.clone();
+        let drive_cache = cache.clone();
+        tokio::spawn(async move {
+            statskboo::ingest::drive_index_loop(drive_cfg, drive_pool, drive_cache).await;
+        });
+    } else {
+        tracing::info!("WFTDA sync and Drive index disabled (WFTDA_SYNC_ENABLED=false)");
+    }
 
     statskboo::web::serve(cfg, pool, cache).await
 }

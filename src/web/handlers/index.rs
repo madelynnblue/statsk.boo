@@ -5,14 +5,14 @@ use serde::Serialize;
 
 pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppError> {
     let rows = sqlx::query!(
-        r#"SELECT g.canonical_id, g.date, g.home_score, g.away_score,
-                  home.team as home_team, home.league as home_league,
-                  away.team as away_team, away.league as away_league
-           FROM (SELECT id, canonical_id, date, ingested_at, home_score, away_score
-                 FROM games ORDER BY date DESC, ingested_at DESC LIMIT 25) g
-           INNER LOOKUP JOIN game_sides home ON home.game_id = g.id AND home.side = 'home'
-           INNER LOOKUP JOIN game_sides away ON away.game_id = g.id AND away.side = 'away'
-           ORDER BY g.date DESC, g.ingested_at DESC"#,
+        r#"SELECT g.id, g.date, g.team_1_score, g.team_2_score,
+                  t1.id AS home_id, t1.title AS home_title,
+                  t2.id AS away_id, t2.title AS away_title
+             FROM wftda_games g
+             JOIN wftda_teams t1 ON t1.id = g.team_1_id
+             JOIN wftda_teams t2 ON t2.id = g.team_2_id
+            ORDER BY g.date DESC, g.id DESC
+            LIMIT 25"#,
     )
     .fetch_all(&*state.pool)
     .await?;
@@ -20,14 +20,14 @@ pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppEr
     let games: Vec<RecentGame> = rows
         .into_iter()
         .map(|r| RecentGame {
-            game_id: r.canonical_id,
+            game_id: r.id,
             date: r.date,
-            home_score: r.home_score,
-            away_score: r.away_score,
-            home_team: r.home_team.unwrap_or_default(),
-            home_league: r.home_league.unwrap_or_default(),
-            away_team: r.away_team.unwrap_or_default(),
-            away_league: r.away_league.unwrap_or_default(),
+            home_score: r.team_1_score,
+            away_score: r.team_2_score,
+            home_id: r.home_id,
+            home_title: r.home_title,
+            away_id: r.away_id,
+            away_title: r.away_title,
         })
         .collect();
 
@@ -38,12 +38,12 @@ pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppEr
 
 #[derive(Serialize)]
 struct RecentGame {
-    game_id: String,
+    game_id: i64,
     date: chrono::NaiveDate,
     home_score: i16,
     away_score: i16,
-    home_team: String,
-    home_league: String,
-    away_team: String,
-    away_league: String,
+    home_id: i64,
+    home_title: String,
+    away_id: i64,
+    away_title: String,
 }

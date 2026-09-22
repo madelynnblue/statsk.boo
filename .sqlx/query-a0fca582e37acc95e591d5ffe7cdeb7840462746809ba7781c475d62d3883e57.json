@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO statsbook_sides\n                     (drive_file_id, side, wftda_team_id, league, team, color, league_canonical, team_canonical)\n                   VALUES ($1, $2, NULL, $3, $4, $5, $6, $7)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a0fca582e37acc95e591d5ffe7cdeb7840462746809ba7781c475d62d3883e57"
+}

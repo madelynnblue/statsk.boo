@@ -1,0 +1,88 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM (\n                      SELECT DISTINCT ON (g.id)\n                             g.id AS wftda_game_id,\n                             g.date,\n                             t1.id AS home_id,  t1.title AS home_title,\n                             t2.id AS away_id,  t2.title AS away_title,\n                             g.team_1_score AS home_score,\n                             g.team_2_score AS away_score,\n                             sg.tournament, sg.venue_name, sg.venue_city, sg.venue_state\n                        FROM statsbook_games sg\n                        JOIN game_matches m\n                          ON m.drive_file_id = sg.drive_file_id\n                         AND m.wftda_game_id IS NOT NULL\n                        JOIN wftda_games g  ON g.id  = m.wftda_game_id\n                        JOIN wftda_teams t1 ON t1.id = g.team_1_id\n                        JOIN wftda_teams t2 ON t2.id = g.team_2_id\n                       WHERE sg.tournament ILIKE $1\n                          OR sg.venue_name ILIKE $1\n                          OR sg.venue_city ILIKE $1\n                       ORDER BY g.id, g.date DESC\n               ) hits\n               ORDER BY hits.date DESC, hits.wftda_game_id DESC\n               LIMIT 200",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "wftda_game_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 2,
+        "name": "home_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "home_title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "away_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "away_title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "home_score",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 7,
+        "name": "away_score",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 8,
+        "name": "tournament",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "venue_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "venue_city",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "venue_state",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "e673148e3cd41359d9d35c515ffd3ffd02eca50e5a41f33660fc7378268fd49e"
+}

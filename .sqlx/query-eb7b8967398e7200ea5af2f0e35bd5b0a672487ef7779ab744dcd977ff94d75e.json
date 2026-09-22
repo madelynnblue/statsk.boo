@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE statsbook_sides\n                   SET wftda_team_id = CASE side\n                       WHEN 'home' THEN $2\n                       WHEN 'away' THEN $3\n                   END\n                   WHERE drive_file_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "eb7b8967398e7200ea5af2f0e35bd5b0a672487ef7779ab744dcd977ff94d75e"
+}

@@ -1,0 +1,20 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO wftda_teams\n                 (id, title, short_name, slug, region, region_id, location, in_teams_api, fetched_at)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, true, now())\n               ON CONFLICT (id) DO UPDATE SET\n                 title        = EXCLUDED.title,\n                 short_name   = EXCLUDED.short_name,\n                 slug         = COALESCE(EXCLUDED.slug, wftda_teams.slug),\n                 region       = EXCLUDED.region,\n                 region_id    = EXCLUDED.region_id,\n                 location     = EXCLUDED.location,\n                 in_teams_api = true,\n                 fetched_at   = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b158d63e03d9cc1c5918c19f2acbbe180d872aa038b5fe52ad85722a466cd79a"
+}

@@ -95,9 +95,10 @@ const FIXTURES: &[Fixture] = &[
         scores: (202, 88),
     },
     // Regression test: the IGRF roster in this statsbook lists skater #390
-    // "Falke" twice (rows 21 and 30), which used to produce two game_skaters
-    // rows with the same (side, number) primary key and fail the batch INSERT
-    // with a unique violation, dropping the whole game from ingest.
+    // "Falke" twice (rows 21 and 30), which used to produce two
+    // `statsbook_skaters` rows with the same (side, number) primary key and
+    // fail the batch INSERT with a unique violation, dropping the whole game
+    // from ingest.
     Fixture {
         path: "copenhagen-dup-roster.xlsx",
         period_count: 2,
@@ -109,7 +110,7 @@ const FIXTURES: &[Fixture] = &[
     },
     // Regression test: this statsbook's IGRF date cell is a text string
     // ("2026-06-27\t\t\t\t") instead of a real Excel date, which used to leave
-    // the game undated and un-fingerprintable. The parser must parse text dates.
+    // the game undated. The parser must parse text dates.
     Fixture {
         path: "connecticut-yankee-brutals.xlsx",
         period_count: 2,
@@ -121,7 +122,7 @@ const FIXTURES: &[Fixture] = &[
     },
     // Regression test: the away TEAM cell is blank in this statsbook's IGRF
     // (the single-team convention), which used to make the away side
-    // anonymous and un-fingerprintable. The team must fall back to the league.
+    // anonymous. The team must fall back to the league.
     Fixture {
         path: "brussels-ladrache.xlsx",
         period_count: 2,
@@ -270,8 +271,9 @@ fn test_fixture_corpus() {
 fn test_roster_numbers_unique_per_side() {
     // A skater number uniquely identifies a player within a side; duplicate
     // roster rows (seen in some statsbooks) must be deduplicated by the parser,
-    // otherwise the game_skaters batch INSERT violates its (game_id, side,
-    // number) primary key and the whole game fails to ingest.
+    // otherwise the `statsbook_skaters` batch INSERT violates its
+    // (drive_file_id, side, number) primary key and the whole game fails to
+    // ingest.
     use std::collections::HashSet;
     for f in FIXTURES {
         let game = parse_fixture(f.path);
@@ -310,7 +312,7 @@ fn test_fixture_summary_totals() {
 }
 
 /// Blank team/league IGRF header cells must fall back to the other value so
-/// the side keeps its identity (required for fingerprinting).
+/// the side keeps its identity (required by the match path).
 #[test]
 fn test_blank_team_league_fallback() {
     use statskboo::ingest::parse::parse_statsbook;
@@ -390,10 +392,11 @@ fn test_cached_excel_date_used_first() {
 }
 
 /// The end-to-end point of the header fallbacks: these statsbooks used to be
-/// skipped by the ingester because build_fingerprint failed on a blank or
-/// text-typed IGRF header. Now they must produce a fingerprint.
+/// skipped by the ingester because a blank or text-typed IGRF header left the
+/// game without a usable identity. Now they must parse with a date and a
+/// complete home/away identity (the fields the match path needs).
 #[test]
-fn test_recovered_games_build_fingerprints() {
+fn test_recovered_games_parse_with_identity() {
     use statskboo::ingest::parse::parse_statsbook_with_date;
 
     // (fixture, real Drive file name — Auld Reekie needs it for the date).
@@ -418,14 +421,11 @@ fn test_recovered_games_build_fingerprints() {
     for (path, name) in fixtures {
         let bytes = std::fs::read(path).unwrap();
         let (game, date) = parse_statsbook_with_date(&bytes, Some(name)).expect("parse failed");
-        let fp = statskboo::ingest::build_fingerprint(&game, date)
-            .unwrap_or_else(|e| panic!("{path}: cannot build fingerprint: {e}"));
-        // build_fingerprint succeeding already proves every identity field is
-        // present; canonical_id is the downstream consumer of that identity.
-        assert!(
-            !statskboo::ingest::compute_canonical_id(&fp).is_empty(),
-            "{path}"
-        );
+        assert!(date.is_some(), "{path}: no date recovered");
+        for (side_name, side) in [("home", &game.home), ("away", &game.away)] {
+            assert!(side.league.is_some(), "{path}: missing {side_name} league");
+            assert!(side.team.is_some(), "{path}: missing {side_name} team");
+        }
     }
 }
 

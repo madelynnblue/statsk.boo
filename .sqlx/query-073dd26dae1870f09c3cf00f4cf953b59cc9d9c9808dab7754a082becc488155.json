@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT m.drive_file_id,\n                  sb.game_data AS \"game_data?\"\n             FROM game_matches m\n             JOIN statsbook_games sb ON sb.drive_file_id = m.drive_file_id\n             JOIN statsbooks s ON s.drive_file_id = m.drive_file_id\n            WHERE m.wftda_game_id = $1\n            ORDER BY s.modified_time DESC NULLS LAST, m.drive_file_id\n            LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "drive_file_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "game_data?",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "073dd26dae1870f09c3cf00f4cf953b59cc9d9c9808dab7754a082becc488155"
+}

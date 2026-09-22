@@ -1,64 +1,34 @@
-use crate::canon::{best_name, canonicalize_league};
+use crate::canon::canonicalize_league;
+use crate::web::handlers::leagues::group_leagues;
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Query, State};
 use axum::response::Html;
 use serde::Deserialize;
-use std::collections::HashMap;
 
 #[derive(Deserialize)]
 pub struct LeagueParams {
     pub league: String,
 }
 
-#[derive(serde::Serialize)]
-struct TeamEntry {
-    team: String,
-    team_canonical: String,
-}
-
 pub async fn handle(
     State(state): State<AppState>,
     Query(params): Query<LeagueParams>,
 ) -> Result<Html<String>, AppError> {
-    let league_canonical = canonicalize_league(&params.league);
+    let league_canonical = canonicalize_league(params.league.trim());
 
-    let league_row = sqlx::query!(
-        r#"SELECT league FROM game_sides WHERE league_canonical = $1 LIMIT 1"#,
-        league_canonical,
-    )
-    .fetch_optional(&*state.pool)
-    .await?
-    .ok_or_else(|| AppError::NotFound)?;
+    let rows = sqlx::query!("SELECT id, title FROM wftda_teams ORDER BY title")
+        .fetch_all(&*state.pool)
+        .await?;
 
-    let team_rows = sqlx::query!(
-        r#"SELECT team, team_canonical FROM game_sides WHERE league_canonical = $1"#,
-        league_canonical,
-    )
-    .fetch_all(&*state.pool)
-    .await?;
-
-    let mut groups: HashMap<String, Vec<String>> = HashMap::new();
-    for r in &team_rows {
-        groups
-            .entry(r.team_canonical.clone())
-            .or_default()
-            .push(r.team.clone().unwrap_or_default());
-    }
-    let mut teams: Vec<TeamEntry> = groups
+    let league = group_leagues(rows.into_iter().map(|r| (r.id, r.title)).collect())
         .into_iter()
-        .map(|(team_canonical, variants)| TeamEntry {
-            team: best_name(variants.iter().map(|s| s.as_str()))
-                .unwrap_or_else(|| team_canonical.clone()),
-            team_canonical,
-        })
-        .collect();
-    teams.sort_by(|a, b| a.team_canonical.cmp(&b.team_canonical));
+        .find(|l| l.league_canonical == league_canonical)
+        .ok_or(AppError::NotFound)?;
 
     let tmpl = state.env.get_template("league.html")?;
     let html = tmpl.render(minijinja::context! {
-        league_canonical => league_canonical,
-        league => league_row.league,
-        teams,
+        league => league.league,
+        teams  => league.teams,
     })?;
     Ok(Html(html))
 }

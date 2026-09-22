@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE statsbook_sides SET wftda_team_id = NULL WHERE drive_file_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3150b6935c5bc0af582704813c0e45c5a1d493b2d6e0c4e9d38932d8621edf90"
+}

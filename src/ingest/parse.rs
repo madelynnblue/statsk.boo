@@ -506,8 +506,9 @@ fn parse_team<R: std::io::Read + std::io::Seek>(
     let mut skaters = Vec::new();
     // Some statsbooks list the same skater number twice in the roster (e.g.
     // Copenhagen B vs Rolling Rat Pack 2024-05-25 has #390 twice). A number is
-    // the player's identity within a side, and the game_skaters table has a
-    // (game_id, side, number) primary key, so keep only the first occurrence.
+    // the player's identity within a side, and `statsbook_skaters` has a
+    // (drive_file_id, side, number) primary key, so keep only the first
+    // occurrence.
     let mut seen_numbers = HashSet::new();
     for i in 0..max_skaters {
         let row = first_row + i;

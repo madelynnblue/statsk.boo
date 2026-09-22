@@ -1,25 +1,21 @@
-use crate::canon::{best_name, canonicalize_league, canonicalize_team};
 use crate::web::{AppState, error::AppError};
-use axum::extract::{Query, State};
+use axum::extract::{Path, State};
 use axum::response::Html;
-use serde::{Deserialize, Serialize};
-
-#[derive(Deserialize)]
-pub struct TeamParams {
-    pub league: String,
-    pub team: String,
-}
+use serde::Serialize;
 
 #[derive(Serialize)]
 struct GameRow {
-    game_id: String,
+    game_id: i64,
     date: String,
-    side: String,
+    opponent_id: i64,
+    opponent_title: String,
+    opponent_slug: Option<String>,
     our_score: i16,
     their_score: i16,
-    opponent_team: String,
-    opponent_league: String,
     result: String,
+    /// Present when `game_matches` links a statsbook to this WFTDA game, so the
+    /// row can offer the "StatsBook" link in addition to the WFTDA one.
+    statsbook_drive_file_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -31,50 +27,49 @@ struct Record {
 
 pub async fn handle(
     State(state): State<AppState>,
-    Query(params): Query<TeamParams>,
+    Path(wftda_team_id): Path<i64>,
 ) -> Result<Html<String>, AppError> {
-    let league_canonical = canonicalize_league(&params.league);
-    let team_canonical = canonicalize_team(Some(&params.league), &params.team);
+    let team = sqlx::query!(
+        r#"SELECT id, title, slug AS "slug?", region AS "region?"
+             FROM wftda_teams
+            WHERE id = $1"#,
+        wftda_team_id,
+    )
+    .fetch_optional(&*state.pool)
+    .await?
+    .ok_or(AppError::NotFound)?;
 
-    let row = sqlx::query!(
-        r#"SELECT g.canonical_id, g.date, g.home_score, g.away_score,
-                  team_side.side as "side!: String",
-                  team_side.league, team_side.team,
-                  opp.league as opp_league, opp.team as opp_team
-           FROM games g
-           JOIN game_sides team_side ON team_side.game_id = g.id
-           JOIN game_sides opp ON opp.game_id = g.id AND opp.side != team_side.side
-           WHERE team_side.league_canonical = $1 AND team_side.team_canonical = $2
-           ORDER BY g.date DESC"#,
-        league_canonical,
-        team_canonical,
+    let rows = sqlx::query!(
+        r#"SELECT g.id,
+                  g.date,
+                  CASE WHEN g.team_1_id = $1 THEN g.team_2_id ELSE g.team_1_id END AS "opponent_id!",
+                  opp.title AS opponent_title,
+                  opp.slug  AS "opponent_slug?",
+                  CASE WHEN g.team_1_id = $1 THEN g.team_1_score ELSE g.team_2_score END AS "our_score!",
+                  CASE WHEN g.team_1_id = $1 THEN g.team_2_score ELSE g.team_1_score END AS "their_score!",
+                  (SELECT m.drive_file_id
+                     FROM game_matches m
+                    WHERE m.wftda_game_id = g.id
+                    ORDER BY m.drive_file_id
+                    LIMIT 1) AS "statsbook_drive_file_id?"
+             FROM wftda_games g
+             JOIN wftda_teams opp
+               ON opp.id = CASE WHEN g.team_1_id = $1 THEN g.team_2_id ELSE g.team_1_id END
+            WHERE g.team_1_id = $1 OR g.team_2_id = $1
+            ORDER BY g.date DESC, g.id DESC"#,
+        wftda_team_id,
     )
     .fetch_all(&*state.pool)
     .await?;
 
-    let display_league = row
-        .first()
-        .and_then(|r| r.league.clone())
-        .unwrap_or_else(|| params.league.clone());
-    let display_team = best_name(row.iter().filter_map(|r| r.team.as_deref()))
-        .unwrap_or_else(|| params.team.clone());
-
-    let mut game_rows: Vec<GameRow> = Vec::new();
     let mut record = Record {
         wins: 0,
         losses: 0,
         ties: 0,
     };
-
-    for row in &row {
-        let side = &row.side;
-        let (our_score, their_score) = if side == "home" {
-            (row.home_score, row.away_score)
-        } else {
-            (row.away_score, row.home_score)
-        };
-
-        let result = match our_score.cmp(&their_score) {
+    let mut games: Vec<GameRow> = Vec::with_capacity(rows.len());
+    for row in rows {
+        let result = match row.our_score.cmp(&row.their_score) {
             std::cmp::Ordering::Greater => {
                 record.wins += 1;
                 "W"
@@ -88,27 +83,27 @@ pub async fn handle(
                 "T"
             }
         };
-
-        game_rows.push(GameRow {
-            game_id: row.canonical_id.clone(),
+        games.push(GameRow {
+            game_id: row.id,
             date: row.date.to_string(),
-            side: side.clone(),
-            our_score,
-            their_score,
-            opponent_team: row.opp_team.clone().unwrap_or_default(),
-            opponent_league: row.opp_league.clone().unwrap_or_default(),
+            opponent_id: row.opponent_id,
+            opponent_title: row.opponent_title,
+            opponent_slug: row.opponent_slug,
+            our_score: row.our_score,
+            their_score: row.their_score,
             result: result.to_string(),
+            statsbook_drive_file_id: row.statsbook_drive_file_id,
         });
     }
 
     let tmpl = state.env.get_template("team.html")?;
     let html = tmpl.render(minijinja::context! {
-        league_canonical => league_canonical,
-        team_canonical   => team_canonical,
-        league => display_league,
-        team   => display_team,
-        record => record,
-        games  => game_rows,
+        team_id => team.id,
+        title   => team.title,
+        slug    => team.slug,
+        region  => team.region,
+        record,
+        games,
     })?;
     Ok(Html(html))
 }

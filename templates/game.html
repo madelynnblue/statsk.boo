@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ game.home.team | default("Home") }} vs {{ game.away.team | default("Away") }}{% endblock %}
+{% block title %}{{ home.title }} vs {{ away.title }}{% endblock %}
 {% block content %}
 <style>
   table.summary th, table.summary td { padding: 1px 3px; border: 1px solid var(--border); }
@@ -13,56 +13,64 @@
   .hl { background: var(--hl); }
   thead .hl { background: var(--hl-head); }
 </style>
-<h1>{{ game.home.team | default("Home") }} vs {{ game.away.team | default("Away") }}</h1>
-{% if source == "drive" %}<p><a href="https://drive.google.com/file/d/{{ drive_file_id }}/view" target="_blank">View statsbook on Google Drive</a></p>{% endif %}
+<h1>{{ home.title }} vs {{ away.title }}</h1>
+<p>
+  <a href="https://stats.wftda.com/games/{{ wftda_game_id }}" target="_blank">View on stats.wftda.com</a>
+  {%- if detail %} · <a href="https://drive.google.com/file/d/{{ detail.drive_file_id }}/view" target="_blank">View statsbook on Google Drive</a>{% endif %}
+</p>
 <p>
   {{ date }}
-  {% if game.venue.name %} · <a href="/search?q={{ game.venue.name | urlencode }}">{{ game.venue.name }}</a>{% endif %}
-  {%- if game.venue.city %}, {{ game.venue.city }}{% endif %}
-  {% if game.tournament %} · <a href="/search?q={{ game.tournament | urlencode }}">{{ game.tournament }}</a>{% endif %}
+  {% if detail and detail.game.venue.name %} · <a href="/search?q={{ detail.game.venue.name | urlencode }}">{{ detail.game.venue.name }}</a>{% endif %}
+  {%- if detail and detail.game.venue.city %}, {{ detail.game.venue.city }}{% endif %}
+  {% if detail and detail.game.tournament %} · <a href="/search?q={{ detail.game.tournament | urlencode }}">{{ detail.game.tournament }}</a>{% endif %}
 </p>
 
-<h2>Final Score: {{ home_score }}–{{ away_score }}</h2>
+<h2>Final Score: {{ home.score }}–{{ away.score }}</h2>
 
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;margin:1rem 0">
   <div>
-    <h3><a href="/team?league={{ game.home.league | urlencode }}&team={{ game.home.team | urlencode }}">{{ game.home.team | default("Home") }}</a>{% if game.home.color %} · {{ game.home.color }}{% endif %}</h3>
+    <h3><a href="/team/{{ home.id }}">{{ home.title }}</a>{% if detail and detail.game.home.color %} · {{ detail.game.home.color }}{% endif %}</h3>
+    {% if detail %}
     <table>
       <thead><tr><th>#</th><th>Name</th></tr></thead>
       <tbody>
-      {% for s in game.home.skaters %}
+      {% for s in detail.home_skaters %}
         <tr>
           <td>{{ s.number }}</td>
-          <td><a href="/player?league={{ game.home.league | urlencode }}&name={{ s.name | urlencode }}&number={{ s.number | urlencode }}">{{ s.name }}</a></td>
+          <td>{% if detail.home_wftda_team_id %}<a href="/player?team={{ detail.home_wftda_team_id }}&name={{ s.name | urlencode }}&number={{ s.number | urlencode }}">{{ s.name }}</a>{% else %}{{ s.name }}{% endif %}</td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
+    {% endif %}
   </div>
   <div>
-    <h3><a href="/team?league={{ game.away.league | urlencode }}&team={{ game.away.team | urlencode }}">{{ game.away.team | default("Away") }}</a>{% if game.away.color %} · {{ game.away.color }}{% endif %}</h3>
+    <h3><a href="/team/{{ away.id }}">{{ away.title }}</a>{% if detail and detail.game.away.color %} · {{ detail.game.away.color }}{% endif %}</h3>
+    {% if detail %}
     <table>
       <thead><tr><th>#</th><th>Name</th></tr></thead>
       <tbody>
-      {% for s in game.away.skaters %}
+      {% for s in detail.away_skaters %}
         <tr>
           <td>{{ s.number }}</td>
-          <td><a href="/player?league={{ game.away.league | urlencode }}&name={{ s.name | urlencode }}&number={{ s.number | urlencode }}">{{ s.name }}</a></td>
+          <td>{% if detail.away_wftda_team_id %}<a href="/player?team={{ detail.away_wftda_team_id }}&name={{ s.name | urlencode }}&number={{ s.number | urlencode }}">{{ s.name }}</a>{% else %}{{ s.name }}{% endif %}</td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
+    {% endif %}
   </div>
 </div>
 
-{% for period in game.periods %}
+{% if detail %}
+{% for period in detail.game.periods %}
 <h2>Period {{ period.number }}</h2>
 <table>
   <thead>
     <tr>
       <th>Jam</th>
-      <th colspan="5">{{ game.home.team | default("Home") }}</th>
-      <th colspan="5">{{ game.away.team | default("Away") }}</th>
+      <th colspan="5">{{ detail.game.home.team | default(home.title) }}</th>
+      <th colspan="5">{{ detail.game.away.team | default(away.title) }}</th>
     </tr>
     <tr>
       <th>#</th>
@@ -74,16 +82,16 @@
   {% for jam in period.jams %}
     <tr>
       <td>{{ jam.number }}</td>
-      <td>{{ home_names[jam.home.jammer] | default(jam.home.jammer | default("-")) }}{% if jam.home.star_pass_jammer %} → {{ home_names[jam.home.star_pass_jammer] | default(jam.home.star_pass_jammer) }}{% endif %}</td>
+      <td>{{ detail.home_names[jam.home.jammer] | default(jam.home.jammer | default("-")) }}{% if jam.home.star_pass_jammer %} → {{ detail.home_names[jam.home.star_pass_jammer] | default(jam.home.star_pass_jammer) }}{% endif %}</td>
       <td>{% if jam.home.lead %}L{% endif %}{% if jam.home.lost %}X{% endif %}{% if jam.home.called %}C{% endif %}</td>
       <td>{{ jam.home.score }}</td>
-      <td>{% for e in jam.home.lineup %}{% if e.position == "pivot" %}{{ home_names[e.number] | default(e.number) }}{% endif %}{% endfor %}</td>
-	      <td>{% for e in jam.home.lineup %}{% if e.position == "blocker" %}{{ home_names[e.number] | default(e.number) }}{% if not loop.last %}, {% endif %}{% endif %}{% endfor %}</td>
-      <td>{{ away_names[jam.away.jammer] | default(jam.away.jammer | default("-")) }}{% if jam.away.star_pass_jammer %} → {{ away_names[jam.away.star_pass_jammer] | default(jam.away.star_pass_jammer) }}{% endif %}</td>
+      <td>{% for e in jam.home.lineup %}{% if e.position == "pivot" %}{{ detail.home_names[e.number] | default(e.number) }}{% endif %}{% endfor %}</td>
+      <td>{% for e in jam.home.lineup %}{% if e.position == "blocker" %}{{ detail.home_names[e.number] | default(e.number) }}{% if not loop.last %}, {% endif %}{% endif %}{% endfor %}</td>
+      <td>{{ detail.away_names[jam.away.jammer] | default(jam.away.jammer | default("-")) }}{% if jam.away.star_pass_jammer %} → {{ detail.away_names[jam.away.star_pass_jammer] | default(jam.away.star_pass_jammer) }}{% endif %}</td>
       <td>{% if jam.away.lead %}L{% endif %}{% if jam.away.lost %}X{% endif %}{% if jam.away.called %}C{% endif %}</td>
       <td>{{ jam.away.score }}</td>
-      <td>{% for e in jam.away.lineup %}{% if e.position == "pivot" %}{{ away_names[e.number] | default(e.number) }}{% endif %}{% endfor %}</td>
-	      <td>{% for e in jam.away.lineup %}{% if e.position == "blocker" %}{{ away_names[e.number] | default(e.number) }}{% if not loop.last %}, {% endif %}{% endif %}{% endfor %}</td>
+      <td>{% for e in jam.away.lineup %}{% if e.position == "pivot" %}{{ detail.away_names[e.number] | default(e.number) }}{% endif %}{% endfor %}</td>
+      <td>{% for e in jam.away.lineup %}{% if e.position == "blocker" %}{{ detail.away_names[e.number] | default(e.number) }}{% if not loop.last %}, {% endif %}{% endif %}{% endfor %}</td>
     </tr>
   {% endfor %}
   </tbody>
@@ -220,17 +228,22 @@
   {% endif %}
 {% endmacro %}
 
-{% if game.game_summary %}
+{% if detail.home_summary or detail.away_summary %}
 <h2>Game Summary</h2>
-<h3>{{ game.home.team | default("Home") }}</h3>
-<div class="summary-scroll">{{ summary_table(game.game_summary.home_players, totals=game.game_summary.home_totals) }}</div>
-<h3>{{ game.away.team | default("Away") }}</h3>
-<div class="summary-scroll">{{ summary_table(game.game_summary.away_players, totals=game.game_summary.away_totals) }}</div>
+{% if detail.home_summary %}
+<h3>{{ detail.game.home.team | default(home.title) }}</h3>
+<div class="summary-scroll">{{ summary_table(detail.home_summary.players, totals=detail.home_summary.totals) }}</div>
+{% endif %}
+{% if detail.away_summary %}
+<h3>{{ detail.game.away.team | default(away.title) }}</h3>
+<div class="summary-scroll">{{ summary_table(detail.away_summary.players, totals=detail.away_summary.totals) }}</div>
+{% endif %}
 {% endif %}
 
-{% if home_penalties or away_penalties %}
+{% if detail.home_penalties or detail.away_penalties %}
 <h2>Penalties</h2>
-{{ penalties_table(game.home.team | default("Home"), home_penalties) }}
-{{ penalties_table(game.away.team | default("Away"), away_penalties) }}
+{{ penalties_table(detail.game.home.team | default(home.title), detail.home_penalties) }}
+{{ penalties_table(detail.game.away.team | default(away.title), detail.away_penalties) }}
+{% endif %}
 {% endif %}
 {% endblock %}

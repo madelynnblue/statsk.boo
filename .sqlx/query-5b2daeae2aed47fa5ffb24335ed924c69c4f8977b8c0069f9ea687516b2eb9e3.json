@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT drive_file_id FROM statsbooks WHERE last_seen < $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "drive_file_id",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "5b2daeae2aed47fa5ffb24335ed924c69c4f8977b8c0069f9ea687516b2eb9e3"
+}

@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT drive_file_id, name, mime_type, modified_time\n           FROM statsbooks\n           WHERE parse_status IN ('pending', 'failed')\n              OR parser_version < $1\n           ORDER BY modified_time ASC NULLS FIRST, drive_file_id\n           LIMIT $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "drive_file_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "mime_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "modified_time",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "4061d04ab706ff165868ccfaccf263110292b499357633852cf9b09ddc1a4bd2"
+}

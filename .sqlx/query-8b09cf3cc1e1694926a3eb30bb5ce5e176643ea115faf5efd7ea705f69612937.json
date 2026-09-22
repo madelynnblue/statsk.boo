@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO wftda_teams (id, title, in_teams_api, fetched_at)\n               VALUES ($1, $2, false, now())\n               ON CONFLICT (id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "8b09cf3cc1e1694926a3eb30bb5ce5e176643ea115faf5efd7ea705f69612937"
+}
