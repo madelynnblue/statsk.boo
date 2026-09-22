@@ -154,6 +154,19 @@ const FIXTURES: &[Fixture] = &[
         summary_players: (4, 4),
         scores: (93, 156),
     },
+    // Regression test: this statsbook's cached IGRF home TOTAL POINTS cell
+    // (C38 = SUM(C36:C37)) is stale at 0 even though the Score sheet records
+    // real jam scores summing to 146. The parser must use the jam sum for that
+    // side while keeping the away side's cached 67.
+    Fixture {
+        path: "dallas-hidden-tracks-igrf-zero.xlsx",
+        period_count: 2,
+        jam_counts: &[19, 23],
+        star_pass_counts: &[7, 7],
+        penalties: 38,
+        summary_players: (15, 13),
+        scores: (146, 67),
+    },
 ];
 
 fn parse_fixture(path: &str) -> GameData {
@@ -436,5 +449,24 @@ fn test_empty_statsbook_has_no_game_data() {
     assert!(
         game.game_summary.is_none(),
         "empty statsbook produced a game summary"
+    );
+}
+
+/// A stale cached IGRF TOTAL POINTS cell must not override real jam scores.
+/// Here the home side caches 0 — its `SUM(C36:C37)` period subtotals were never
+/// refreshed — while the Score sheet's jams sum to 146. The away side's cached
+/// 67 is valid and stays authoritative.
+#[test]
+fn test_stale_zero_igrf_total_uses_jam_sum() {
+    use statskboo::ingest::parse::{has_no_game_data, parse_statsbook};
+
+    let bytes = std::fs::read("tests/fixtures/dallas-hidden-tracks-igrf-zero.xlsx").unwrap();
+    let game = parse_statsbook(&bytes).expect("parse failed");
+
+    assert_eq!(game.home_score, 146, "home score");
+    assert_eq!(game.away_score, 67, "away score");
+    assert!(
+        !has_no_game_data(&game),
+        "played game detected as empty placeholder"
     );
 }

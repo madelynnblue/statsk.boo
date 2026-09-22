@@ -11,7 +11,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 19;
+pub const PARSER_VERSION: i64 = 20;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes, None)?;
@@ -79,12 +79,31 @@ pub fn parse_statsbook_with_date(
         None
     };
 
-    let (home_score, away_score) = parse_igrf_scores(&mut wb).unwrap_or_else(|| {
-        (
-            periods_score(&periods, Side::Home),
-            periods_score(&periods, Side::Away),
-        )
-    });
+    let jam_home = periods_score(&periods, Side::Home);
+    let jam_away = periods_score(&periods, Side::Away);
+    let (mut home_score, mut away_score) =
+        parse_igrf_scores(&mut wb).unwrap_or((jam_home, jam_away));
+    // A cached IGRF total can be stale or only partially recalculated. Dallas
+    // Derby Devils vs Rockin' City (2024-10-19) caches C38 as 0 — its
+    // `SUM(C36:C37)` period subtotals were never refreshed — while the Score
+    // sheet records a real 146-point home game. A cached 0 against a positive
+    // jam sum is the only evidence of that failure, so override just that side;
+    // IGRF stays authoritative everywhere else (e.g. boise-boulder, where its
+    // 174 correctly beats a jam sum of 175 inflated by a bad SP trip cell).
+    if home_score == 0 && jam_home > 0 {
+        tracing::warn!(
+            "IGRF home total is 0 but Score sheet sums to {}; using jam sum",
+            jam_home
+        );
+        home_score = jam_home;
+    }
+    if away_score == 0 && jam_away > 0 {
+        tracing::warn!(
+            "IGRF away total is 0 but Score sheet sums to {}; using jam sum",
+            jam_away
+        );
+        away_score = jam_away;
+    }
     let game = GameData {
         version,
         venue,
