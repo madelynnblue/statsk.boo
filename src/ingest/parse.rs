@@ -11,7 +11,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 21;
+pub const PARSER_VERSION: i64 = 22;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes, None)?;
@@ -32,15 +32,19 @@ pub fn parse_statsbook_with_date(
     let version = parse_version(&mut wb);
     let venue = parse_venue(&mut wb)?;
     let (tournament, host_league, date) = parse_igrf_meta(&mut wb, file_name)?;
-    let home = parse_team(&mut wb, 1, 2, 13, 20)?;
-    let away = parse_team(&mut wb, 8, 9, 13, 20)?;
+    let mut home = parse_team(&mut wb, 1, 2, 13, 20)?;
+    let mut away = parse_team(&mut wb, 8, 9, 13, 20)?;
     let mut periods = parse_scores(&mut wb)?;
     merge_lineups(&mut wb, &mut periods)?;
     let has_jams = periods.iter().any(|p| !p.jams.is_empty());
-    // Used by the summary/stats paths below. The roster itself is NOT filtered
-    // to these players: bench and 0-jam players are still rostered.
+    // Used by the summary/stats paths below.
     let home_players = players_in_jams(&periods, Side::Home);
     let away_players = players_in_jams(&periods, Side::Away);
+    // Keep only the players who actually appeared in a jam (WFTDA fields at
+    // most 15; the IGRF charter roster can list up to 20). Bench players who
+    // never took the track are not shown on the game page.
+    home.skaters.retain(|s| home_players.contains(&s.number));
+    away.skaters.retain(|s| away_players.contains(&s.number));
     let igrf = read_igrf_cells(&mut wb)?;
     let penalties = parse_penalties(&mut wb, &igrf)?;
     let home_jam_counts = compute_jam_counts(&periods, Side::Home);
@@ -129,6 +133,11 @@ pub fn has_no_game_data(game: &GameData) -> bool {
         && game.penalties.is_empty()
         && game.home_score == 0
         && game.away_score == 0
+}
+
+/// The Lineups sheet has an extra row labelled `SP`/`SP*` for star passes.
+fn is_star_pass_row(value: &str) -> bool {
+    value.trim().to_ascii_uppercase().starts_with("SP")
 }
 
 /// A `*` after a player number in the IGRF roster means they played 0 jams.
@@ -639,10 +648,12 @@ fn merge_lineups<R: std::io::Read + std::io::Seek>(
         };
         let mut row = start_row;
         for jam in period.jams.iter_mut() {
-            // Skip SP (star pass) rows in the Lineups sheet. An empty
-            // string in column A means the cell exists but is blank, not SP.
+            // The Lineups sheet adds an extra `SP`/`SP*` row after some jams.
+            // Jam numbers may also be stored as strings, so only skip rows that
+            // actually start with SP — skipping every string row swallowed the
+            // whole sheet and left every jam's lineup empty.
             while let Some(Data::String(s)) = sheet.get_value((row, 0u32)) {
-                if s.trim().is_empty() {
+                if s.trim().is_empty() || !is_star_pass_row(s) {
                     break;
                 }
                 row += 1;
@@ -1255,5 +1266,16 @@ mod tests {
         assert_eq!(date_from_file_name("2024-09-28.xlsx"), None);
         assert_eq!(date_from_file_name("[WFTDA]STATS-24-09-28_...xlsx"), None);
         assert_eq!(date_from_file_name("[WFTDA]STATS"), None);
+    }
+
+    #[test]
+    fn star_pass_rows_are_only_sp_labels() {
+        // Jam numbers can also be strings; they must not be skipped as SP rows.
+        assert!(is_star_pass_row("SP*"));
+        assert!(is_star_pass_row("SP"));
+        assert!(is_star_pass_row(" sp "));
+        assert!(!is_star_pass_row("1"));
+        assert!(!is_star_pass_row("38"));
+        assert!(!is_star_pass_row(""));
     }
 }

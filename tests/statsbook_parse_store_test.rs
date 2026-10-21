@@ -105,10 +105,9 @@ async fn store_parsed_verification_without_drive() {
         statskboo::ingest::parse::parse_statsbook_with_date(&standbys, Some(STANDBYS)).unwrap();
     let expected_skaters = parsed.home.skaters.len() + parsed.away.skaters.len();
     // Pinned so a parser regression that silently drops roster rows is caught.
-    // Includes the full IGRF roster (bench and 0-jam players), not just the
-    // players who appear in a jam.
+    // Only players who appeared in a jam are stored (bench players excluded).
     assert_eq!(
-        expected_skaters, 39,
+        expected_skaters, 30,
         "standbys-flatiron roster size changed"
     );
     println!(

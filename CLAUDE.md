@@ -92,7 +92,7 @@ Search/proximity indexes are CockroachDB **inverted indexes** (`CREATE INVERTED 
 Three parser behaviours carried over from the redesign (see `docs/wftda-first-redesign.md`):
 - `has_no_game_data` treats a statsbook with no jams, no penalties, and a 0–0 score as an unfilled placeholder; `store_parsed` marks it `skipped`.
 - A cached IGRF point total of `0` on a side whose Score-sheet jam sum is positive is overridden with the jam sum (a stale cached formula), for that side only; IGRF stays authoritative otherwise.
-- The IGRF roster is stored in full: a trailing `*` marks a player who took zero jams, and it is stripped from the number rather than dropping the player, so bench and 0-jam players still appear in rosters.
+- The IGRF roster is narrowed to the players who actually appeared in a jam (WFTDA fields up to 15; the charter roster can list 20). A trailing `*` marks a player who took zero jams and is stripped from the number, not used to drop a blocker who played. Jam lineups must include the three blockers from the Lineups sheet, or the page's Blockers column is empty and the played-roster filter drops them.
 
 **Web layer:**
 - Routes: `GET /` (recent WFTDA games), `GET /search?q=` (players, teams, derived leagues, and tournaments/venues from matched statsbooks), `GET /player?team=&name=&number=`, `GET /team/{slug}`, `GET /leagues`, `GET /league?league=`, `GET /game/{wftda_game_id}`, `GET /about`, `GET /robots.txt`

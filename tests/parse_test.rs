@@ -168,6 +168,19 @@ const FIXTURES: &[Fixture] = &[
         summary_players: (15, 13),
         scores: (146, 67),
     },
+    // Live game 69052 (Arch Rival vs Denver, 2026-10-18): the Lineups sheet
+    // has SP rows interspersed with the jam rows, and only 15/14 of the
+    // 20-player IGRF charter roster actually played. Regression coverage for
+    // blockers being swallowed and for the played-roster filter.
+    Fixture {
+        path: "arch-rival-mile-high.xlsx",
+        period_count: 2,
+        jam_counts: &[20, 25],
+        star_pass_counts: &[4, 1],
+        penalties: 49,
+        summary_players: (15, 14),
+        scores: (182, 117),
+    },
 ];
 
 fn parse_fixture(path: &str) -> GameData {
@@ -292,25 +305,34 @@ fn test_roster_numbers_unique_per_side() {
 }
 
 #[test]
-fn test_full_roster_includes_bench_and_zero_jam_players() {
-    // The IGRF roster lists the whole game roster; a trailing `*` only marks a
-    // player who took zero jams. Both must stay on the roster (with the marker
-    // stripped) — filtering to jam participants produced 8/6-player "rosters"
-    // for 20/20-player files.
+fn test_played_roster_and_jam_blockers() {
+    // Only players who actually appeared in a jam are kept (WFTDA fields up to
+    // 15; the IGRF charter roster can list 20). Lineups must carry the three
+    // blockers as well as jammer/pivot, or the game page's Blockers column is
+    // empty and the played-roster filter drops everyone who only blocked.
     let game = parse_fixture("standbys-flatiron.xlsx");
     assert_eq!(
         game.home.skaters.len() + game.away.skaters.len(),
-        39,
-        "full IGRF roster (20 home + 19 away)"
+        30,
+        "played roster (bench players excluded)"
     );
-    assert!(
-        game.home.skaters.iter().any(|s| s.number == "143"),
-        "0-jam player 143 must stay on the home roster"
-    );
-    assert!(
-        game.away.skaters.iter().any(|s| s.number == "114"),
-        "0-jam player 114 must stay on the away roster"
-    );
+    let jam = &game.periods[0].jams[0];
+    let home_blockers: Vec<&str> = jam
+        .home
+        .lineup
+        .iter()
+        .filter(|e| e.position == "blocker")
+        .map(|e| e.number.as_str())
+        .collect();
+    let away_blockers: Vec<&str> = jam
+        .away
+        .lineup
+        .iter()
+        .filter(|e| e.position == "blocker")
+        .map(|e| e.number.as_str())
+        .collect();
+    assert_eq!(home_blockers, ["1917", "412", "02"]);
+    assert_eq!(away_blockers, ["818", "33", "69"]);
     assert!(
         game.home
             .skaters
@@ -319,6 +341,53 @@ fn test_full_roster_includes_bench_and_zero_jam_players() {
             .all(|s| !s.number.ends_with('*')),
         "the zero-jam marker must not leak into the player number"
     );
+}
+
+#[test]
+fn test_arch_rival_lineups_and_played_roster() {
+    // Live 69052: a 20-player charter roster where only 15/14 actually played,
+    // and the Lineups sheet has SP rows between the jam rows. Every jam's
+    // Blockers column must come from the Lineups sheet, not be empty.
+    let game = parse_fixture("arch-rival-mile-high.xlsx");
+    assert_eq!(game.home.skaters.len(), 15, "home played roster");
+    assert_eq!(game.away.skaters.len(), 14, "away played roster");
+
+    let jam = &game.periods[0].jams[0];
+    let home_blockers: Vec<&str> = jam
+        .home
+        .lineup
+        .iter()
+        .filter(|e| e.position == "blocker")
+        .map(|e| e.number.as_str())
+        .collect();
+    let away_blockers: Vec<&str> = jam
+        .away
+        .lineup
+        .iter()
+        .filter(|e| e.position == "blocker")
+        .map(|e| e.number.as_str())
+        .collect();
+    assert_eq!(home_blockers, ["1900", "1853", "810"]);
+    assert_eq!(away_blockers, ["505", "8000", "22"]);
+
+    let total_blockers: usize = game
+        .periods
+        .iter()
+        .flat_map(|p| p.jams.iter())
+        .map(|j| {
+            j.home
+                .lineup
+                .iter()
+                .filter(|e| e.position == "blocker")
+                .count()
+                + j.away
+                    .lineup
+                    .iter()
+                    .filter(|e| e.position == "blocker")
+                    .count()
+        })
+        .sum();
+    assert!(total_blockers > 0, "blockers must not all be empty");
 }
 
 #[test]
