@@ -123,6 +123,8 @@ web server:
 4. **Parse** — downloads each pending statsbook (`alt=media` for `.xlsx`, Sheets
    export for Google Sheets), parses it with calamine, and writes
    `statsbook_games`/`statsbook_sides`/`statsbook_skaters`/`statsbook_summary`.
+   Rosters are the full IGRF roster: bench and 0-jam players are included (a
+   trailing `*` is stripped from the number, not used to drop the player).
    Duplicate uploads are both stored; resolve keeps the newest per game.
    Unfilled placeholders are skipped.
 5. **Resolve** — matches each parsed statsbook to a WFTDA game (exact team

@@ -42,7 +42,7 @@ This updates the `.sqlx/` directory. Commit the result alongside the query chang
 
 statsk.boo (WFTDA StatsBook Browser) is **WFTDA-first**: `stats.wftda.com` is the source of game/team identity and of canonical scores. WFTDA StatsBook `.xlsx` files from a public Google Drive folder are an optional artifact that is attached to a WFTDA game when the matcher resolves one.
 
-**Runtime model:** Single Tokio binary (`src/main.rs`): load `Config` from the environment, connect to CockroachDB, run migrations, then — when `WFTDA_SYNC_ENABLED` (default `true`) — spawn two independent background loops and the Axum web server. Everything shares `Arc<PgPool>` and `Arc<Config>`.
+**Runtime model:** Single Tokio binary (`src/main.rs`): load `Config` from the environment, connect to CockroachDB, run migrations, then — when `WFTDA_SYNC_ENABLED` (default `true`) — spawn two independent background loops and the Axum web server. Everything shares `Arc<PgPool>` and `Arc<Config>`. The web layer's in-memory response cache has no TTL, so both ingest loops call `Cache::clear()` after data-changing stages (and `drain_pending` clears it after each successful parse batch); otherwise a page cached before its statsbook was parsed keeps serving score-only HTML.
 
 - `ingest::wftda_sync_loop` runs stages 1–2 (WFTDA teams + games) every `WFTDA_SYNC_INTERVAL`.
 - `ingest::drive_index_loop` runs stage 3 (Drive statsbook index), stage 4 (parse), and stages 5–6 (resolve) every `DRIVE_INDEX_INTERVAL`. Without a service account it logs a warning and returns, so the server still runs offline.
@@ -89,13 +89,14 @@ Search/proximity indexes are CockroachDB **inverted indexes** (`CREATE INVERTED 
 3. `resolve_igrf_formula` — extracts the first `IGRF!` cell reference from a formula string and looks it up in the IGRF map
 4. All sheets that may reference IGRF (Penalties, Penalties-Lineups, Game Summary) use `cell_str_with_formula` for number/name columns
 
-Two parser guards carried over from the redesign (see `docs/wftda-first-redesign.md`):
+Three parser behaviours carried over from the redesign (see `docs/wftda-first-redesign.md`):
 - `has_no_game_data` treats a statsbook with no jams, no penalties, and a 0–0 score as an unfilled placeholder; `store_parsed` marks it `skipped`.
 - A cached IGRF point total of `0` on a side whose Score-sheet jam sum is positive is overridden with the jam sum (a stale cached formula), for that side only; IGRF stays authoritative otherwise.
+- The IGRF roster is stored in full: a trailing `*` marks a player who took zero jams, and it is stripped from the number rather than dropping the player, so bench and 0-jam players still appear in rosters.
 
 **Web layer:**
 - Routes: `GET /` (recent WFTDA games), `GET /search?q=` (players, teams, derived leagues, and tournaments/venues from matched statsbooks), `GET /player?team=&name=&number=`, `GET /team/{wftda_team_id}`, `GET /leagues`, `GET /league?league=`, `GET /game/{wftda_game_id}`, `GET /about`, `GET /robots.txt`
-- `AppState` holds `Arc<PgPool>`, `Arc<Environment<'static>>` (Minijinja templates), and `Arc<Cache>` (the in-process brotli response cache from `src/web/cache.rs`; `/search` is never cached)
+- `AppState` holds `Arc<PgPool>`, `Arc<Environment<'static>>` (Minijinja templates), and `Arc<Cache>` (the in-process brotli response cache from `src/web/cache.rs`; `/search` is never cached, and the ingest loops clear it after writes)
 - Templates are compiled at build time via `include_str!` in `build_template_env()`
 - A game page renders WFTDA identity/score always, and rosters/jams/penalties/summary only when a `game_matches` row links a statsbook; it links out to `stats.wftda.com/games/{id}` and (when matched) the Drive file
 - Error handling: `AppError` enum (Internal / NotFound) logs internal errors with `tracing::error!` before returning a generic 500 response

@@ -58,7 +58,7 @@ pub async fn drive_index_loop(cfg: Arc<Config>, pool: Arc<PgPool>, cache: Arc<Ca
 
     // Drain any backlog left by a previous run before the first listing, so a
     // fresh backfill or parser bump does not wait one batch per interval.
-    let drained = drain_pending(&pool, &drive, cache_dir).await;
+    let drained = drain_pending(&pool, &drive, cache_dir, cache.as_ref()).await;
     if drained > 0 {
         info!("parse stage: drained {drained} statsbook(s) before first index");
     }
@@ -83,7 +83,7 @@ pub async fn drive_index_loop(cfg: Arc<Config>, pool: Arc<PgPool>, cache: Arc<Ca
         }
         // Stage 4: parse rows marked pending, draining every batch so a first
         // backfill does not trickle in one batch per interval.
-        let parsed = drain_pending(&pool, &drive, cache_dir).await;
+        let parsed = drain_pending(&pool, &drive, cache_dir, cache.as_ref()).await;
         if parsed > 0 {
             info!("parse stage: parsed {parsed} statsbook(s) this cycle");
         }
@@ -105,6 +105,7 @@ async fn drain_pending(
     pool: &PgPool,
     drive: &DriveClient,
     cache_dir: Option<&std::path::Path>,
+    cache: &Cache,
 ) -> usize {
     let mut succeeded = 0usize;
     loop {
@@ -116,6 +117,11 @@ async fn drain_pending(
         )
         .await;
         succeeded += ok;
+        // Refresh progressively during a long backfill: a page rendered while
+        // batch N was running is already stale once batch N commits.
+        if ok > 0 {
+            cache.clear();
+        }
         if selected < statsbook_parse::PARSE_BATCH_LIMIT || ok == 0 {
             break;
         }

@@ -11,7 +11,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 20;
+pub const PARSER_VERSION: i64 = 21;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes, None)?;
@@ -32,15 +32,15 @@ pub fn parse_statsbook_with_date(
     let version = parse_version(&mut wb);
     let venue = parse_venue(&mut wb)?;
     let (tournament, host_league, date) = parse_igrf_meta(&mut wb, file_name)?;
-    let mut home = parse_team(&mut wb, 1, 2, 13, 20)?;
-    let mut away = parse_team(&mut wb, 8, 9, 13, 20)?;
+    let home = parse_team(&mut wb, 1, 2, 13, 20)?;
+    let away = parse_team(&mut wb, 8, 9, 13, 20)?;
     let mut periods = parse_scores(&mut wb)?;
     merge_lineups(&mut wb, &mut periods)?;
     let has_jams = periods.iter().any(|p| !p.jams.is_empty());
+    // Used by the summary/stats paths below. The roster itself is NOT filtered
+    // to these players: bench and 0-jam players are still rostered.
     let home_players = players_in_jams(&periods, Side::Home);
     let away_players = players_in_jams(&periods, Side::Away);
-    home.skaters.retain(|s| home_players.contains(&s.number));
-    away.skaters.retain(|s| away_players.contains(&s.number));
     let igrf = read_igrf_cells(&mut wb)?;
     let penalties = parse_penalties(&mut wb, &igrf)?;
     let home_jam_counts = compute_jam_counts(&periods, Side::Home);
@@ -132,6 +132,7 @@ pub fn has_no_game_data(game: &GameData) -> bool {
 }
 
 /// A `*` after a player number in the IGRF roster means they played 0 jams.
+/// This gates *stats*, not roster membership: 0-jam players are still listed.
 fn is_zero_jam_player(number: &str) -> bool {
     number.ends_with('*')
 }
@@ -519,17 +520,17 @@ fn parse_team<R: std::io::Read + std::io::Seek>(
         if raw_number.is_empty() {
             continue;
         }
-        if is_zero_jam_player(&raw_number) {
+        // A trailing `*` marks a player who took zero jams. It is metadata, not
+        // part of the number, so strip it and keep the player on the roster.
+        let number = raw_number.trim_end_matches('*').to_string();
+        if number.is_empty() {
             continue;
         }
-        if !seen_numbers.insert(raw_number.clone()) {
+        if !seen_numbers.insert(number.clone()) {
             continue;
         }
         let name = cell_str(&sheet, row, name_col).unwrap_or_default();
-        skaters.push(Skater {
-            number: raw_number,
-            name,
-        });
+        skaters.push(Skater { number, name });
     }
     Ok(TeamData {
         league,

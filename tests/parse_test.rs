@@ -292,6 +292,36 @@ fn test_roster_numbers_unique_per_side() {
 }
 
 #[test]
+fn test_full_roster_includes_bench_and_zero_jam_players() {
+    // The IGRF roster lists the whole game roster; a trailing `*` only marks a
+    // player who took zero jams. Both must stay on the roster (with the marker
+    // stripped) — filtering to jam participants produced 8/6-player "rosters"
+    // for 20/20-player files.
+    let game = parse_fixture("standbys-flatiron.xlsx");
+    assert_eq!(
+        game.home.skaters.len() + game.away.skaters.len(),
+        39,
+        "full IGRF roster (20 home + 19 away)"
+    );
+    assert!(
+        game.home.skaters.iter().any(|s| s.number == "143"),
+        "0-jam player 143 must stay on the home roster"
+    );
+    assert!(
+        game.away.skaters.iter().any(|s| s.number == "114"),
+        "0-jam player 114 must stay on the away roster"
+    );
+    assert!(
+        game.home
+            .skaters
+            .iter()
+            .chain(game.away.skaters.iter())
+            .all(|s| !s.number.ends_with('*')),
+        "the zero-jam marker must not leak into the player number"
+    );
+}
+
+#[test]
 fn test_fixture_summary_totals() {
     // SP* rows (star passes by the opposing team) must not be counted as jammer
     // jams. Formualizer's re-evaluation of the LU JAMMER formula counts them,
