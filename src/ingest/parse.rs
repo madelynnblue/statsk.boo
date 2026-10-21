@@ -11,7 +11,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 23;
+pub const PARSER_VERSION: i64 = 24;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes, None)?;
@@ -808,8 +808,10 @@ fn parse_game_summary_formualizer(
 
     let mut home_totals = read_summary_totals(&wb, gs_cached, 26);
     fill_totals_jams_pct(&mut home_totals, &home_players);
+    fill_totals_lead_pct(&mut home_totals);
     let mut away_totals = read_summary_totals(&wb, gs_cached, 48);
     fill_totals_jams_pct(&mut away_totals, &away_players);
+    fill_totals_lead_pct(&mut away_totals);
     Some(GameSummary {
         home_totals,
         away_totals,
@@ -886,6 +888,7 @@ fn read_summary_player(
         penalty_count: lv_u8(fv_val(wb, cached, row, 38)),
     };
     fill_jams_pct(&mut summary, total_jams);
+    fill_lead_pct(&mut summary);
     if summary.jams_total == Some(0) {
         return None;
     }
@@ -981,6 +984,47 @@ fn fill_totals_jams_pct(totals: &mut SummaryTotals, players: &[SummaryPlayer]) {
     if count > 0 {
         totals.jams_pct = Some(sum / count as f32);
     }
+}
+
+/// Derive a player's "Lead %" when the Game Summary cell is blank. The
+/// statsbook formula is `leads / (jammer jams - star passes received)`, and it
+/// returns "" when that denominator is zero (the skater never jammed, or every
+/// jammer jam ended in a star pass). Files exported with the percentages as
+/// display text ("33%") leave the cell unparseable, so reconstruct the value
+/// from the counts instead of showing an empty cell.
+fn fill_lead_pct(summary: &mut SummaryPlayer) {
+    if summary.lead_pct.is_some() {
+        return;
+    }
+    let Some(jammer_jams) = summary.jams_jammer else {
+        return;
+    };
+    let star_passes = summary.star_passes.unwrap_or(0);
+    if jammer_jams <= star_passes {
+        return;
+    }
+    let Some(lead) = summary.lead else {
+        return;
+    };
+    summary.lead_pct = Some(lead as f32 / (jammer_jams - star_passes) as f32);
+}
+
+/// Totals-row counterpart of [`fill_lead_pct`] (`K26/(C26-N26)`).
+fn fill_totals_lead_pct(totals: &mut SummaryTotals) {
+    if totals.lead_pct.is_some() {
+        return;
+    }
+    let Some(jammer_jams) = totals.jams_jammer else {
+        return;
+    };
+    let star_passes = totals.star_passes.unwrap_or(0);
+    if jammer_jams <= star_passes {
+        return;
+    }
+    let Some(lead) = totals.lead else {
+        return;
+    };
+    totals.lead_pct = Some(lead as f32 / (jammer_jams - star_passes) as f32);
 }
 
 /// Convert a LiteralValue to an optional string.
@@ -1095,8 +1139,10 @@ fn parse_game_summary<R: std::io::Read + std::io::Seek>(
         .collect();
     let mut home_totals = parse_summary_totals(&sheet, 25);
     fill_totals_jams_pct(&mut home_totals, &home_players);
+    fill_totals_lead_pct(&mut home_totals);
     let mut away_totals = parse_summary_totals(&sheet, 47);
     fill_totals_jams_pct(&mut away_totals, &away_players);
+    fill_totals_lead_pct(&mut away_totals);
     Ok(GameSummary {
         home_totals,
         away_totals,
@@ -1178,6 +1224,7 @@ fn parse_summary_player(
         penalty_count: cell_opt_u8(sheet, row, 37),
     };
     fill_jams_pct(&mut summary, total_jams);
+    fill_lead_pct(&mut summary);
     if summary.jams_total == Some(0) {
         return None;
     }

@@ -439,6 +439,41 @@ fn test_stale_jams_pct_denominator_is_derived() {
     assert_eq!(darth.lead_pct, Some(0.5));
 }
 
+/// Some statsbooks (Arch Rival vs Mile High, game 69052) store every Game
+/// Summary percentage as text — "33%", "0%", "62%" — instead of numeric
+/// fractions, so the cells don't parse. Both "% Jams Skated" and "Lead %" must
+/// be reconstructed from the underlying counts instead of rendering blank.
+#[test]
+fn test_text_percentage_columns_are_reconstructed() {
+    let game = parse_fixture("arch-rival-mile-high.xlsx");
+    let gs = game.game_summary.as_ref().unwrap();
+    let total_jams = 45.0f32; // 225 jam slots / 5 skaters per jam
+
+    // Shear-Ra Powers: 28 jams, and the only jammer jam was a star pass, so the
+    // statsbook leaves Lead % blank (denominator 0).
+    let shear = gs.home_players.iter().find(|p| p.number == "1057").unwrap();
+    assert_eq!(shear.jams_total, Some(28));
+    assert!((shear.jams_pct.unwrap() - 28.0 / total_jams).abs() < 0.001);
+    assert_eq!(shear.lead_pct, None);
+
+    // Loki Doki: 3 leads in 9 jammer jams ("33%" in the sheet).
+    let loki = gs.home_players.iter().find(|p| p.number == "14").unwrap();
+    assert!((loki.lead_pct.unwrap() - 3.0 / 9.0).abs() < 0.001);
+
+    // Bricktator: 6 leads in 11 jammer jams; the sheet rounds this to "55%",
+    // but the counts give the exact value.
+    let brick = gs.home_players.iter().find(|p| p.number == "48").unwrap();
+    assert!((brick.lead_pct.unwrap() - 6.0 / 11.0).abs() < 0.001);
+
+    // A jammer who never got lead still gets a real 0%.
+    let scare = gs.away_players.iter().find(|p| p.number == "03").unwrap();
+    assert_eq!(scare.lead_pct, Some(0.0));
+
+    // Totals rows: 24/(48-3) and 21/(47-2).
+    assert!((gs.home_totals.lead_pct.unwrap() - 24.0 / 45.0).abs() < 0.001);
+    assert!((gs.away_totals.lead_pct.unwrap() - 21.0 / 45.0).abs() < 0.001);
+}
+
 /// Blank team/league IGRF header cells must fall back to the other value so
 /// the side keeps its identity (required by the match path).
 #[test]
