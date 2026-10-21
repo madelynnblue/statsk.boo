@@ -22,7 +22,7 @@ struct GameRow {
     game_id: i64,
     date: String,
     opponent_team: String,
-    opponent_team_id: i64,
+    opponent_team_path: String,
     side: String,
     jams_as_jammer: u16,
     jams_as_pivot: u16,
@@ -36,7 +36,7 @@ struct GameSummaryEntry {
     game_id: i64,
     date: String,
     opponent_team: String,
-    opponent_team_id: i64,
+    opponent_team_path: String,
     stats: SummaryPlayer,
 }
 
@@ -55,7 +55,8 @@ pub async fn handle(
     let name_canonical = canonicalize_name(&params.name);
 
     let team = sqlx::query!(
-        r#"SELECT id, title, slug AS "slug?"
+        r#"SELECT id, title, slug AS "slug?",
+                  COALESCE(slug, id::STRING) AS "path!"
              FROM wftda_teams
             WHERE id = $1"#,
         params.team,
@@ -72,8 +73,8 @@ pub async fn handle(
                   g.game_data AS "game_data?",
                   wg.id AS wftda_game_id,
                   wg.date,
-                  opp.id AS opponent_id,
-                  opp.title AS opponent_title
+                  opp.title AS opponent_title,
+                  COALESCE(opp.slug, opp.id::STRING) AS "opponent_path!"
              FROM statsbook_skaters sk
              JOIN statsbook_sides s
                ON s.drive_file_id = sk.drive_file_id AND s.side = sk.side
@@ -184,7 +185,7 @@ pub async fn handle(
             game_id: row.wftda_game_id,
             date: row.date.to_string(),
             opponent_team: row.opponent_title.clone(),
-            opponent_team_id: row.opponent_id,
+            opponent_team_path: row.opponent_path.clone(),
             side: side.clone(),
             jams_as_jammer,
             jams_as_pivot,
@@ -229,7 +230,7 @@ pub async fn handle(
                         game_id: game_row.game_id,
                         date: game_row.date.clone(),
                         opponent_team: game_row.opponent_team.clone(),
-                        opponent_team_id: game_row.opponent_team_id,
+                        opponent_team_path: game_row.opponent_team_path.clone(),
                         stats: stats.clone(),
                     });
                 }
@@ -242,6 +243,7 @@ pub async fn handle(
         team_id    => team.id,
         team_title => team.title,
         team_slug  => team.slug,
+        team_path  => team.path,
         name       => display_name,
         number     => params.number,
         career,

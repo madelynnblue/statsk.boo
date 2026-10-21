@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, title, slug AS \"slug?\"\n             FROM wftda_teams\n            WHERE id = $1",
+  "query": "SELECT id, title, slug AS \"slug?\", region AS \"region?\"\n             FROM wftda_teams\n            WHERE slug = $1 OR id = $2",
   "describe": {
     "columns": [
       {
@@ -17,18 +17,25 @@
         "ordinal": 2,
         "name": "slug?",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "region?",
+        "type_info": "Text"
       }
     ],
     "parameters": {
       "Left": [
+        "Text",
         "Int8"
       ]
     },
     "nullable": [
       false,
       false,
+      true,
       true
     ]
   },
-  "hash": "7dd88f6424a4740de4ef56a475cf075cc1f28b1caada4bb9e22633b08376bafe"
+  "hash": "61746e185d97919ad0d31bd59dc32c83ae049a563e84c8d705eb7516e263e2b2"
 }

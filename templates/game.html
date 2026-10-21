@@ -29,7 +29,7 @@
 
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;margin:1rem 0">
   <div>
-    <h3><a href="/team/{{ home.id }}">{{ home.title }}</a>{% if detail and detail.game.home.color %} · {{ detail.game.home.color }}{% endif %}</h3>
+    <h3><a href="/team/{{ home.path }}">{{ home.title }}</a>{% if detail and detail.game.home.color %} · {{ detail.game.home.color }}{% endif %}</h3>
     {% if detail %}
     <table>
       <thead><tr><th>#</th><th>Name</th></tr></thead>
@@ -45,7 +45,7 @@
     {% endif %}
   </div>
   <div>
-    <h3><a href="/team/{{ away.id }}">{{ away.title }}</a>{% if detail and detail.game.away.color %} · {{ detail.game.away.color }}{% endif %}</h3>
+    <h3><a href="/team/{{ away.path }}">{{ away.title }}</a>{% if detail and detail.game.away.color %} · {{ detail.game.away.color }}{% endif %}</h3>
     {% if detail %}
     <table>
       <thead><tr><th>#</th><th>Name</th></tr></thead>

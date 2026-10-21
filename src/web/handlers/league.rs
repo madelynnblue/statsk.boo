@@ -16,11 +16,13 @@ pub async fn handle(
 ) -> Result<Html<String>, AppError> {
     let league_canonical = canonicalize_league(params.league.trim());
 
-    let rows = sqlx::query!("SELECT id, title FROM wftda_teams ORDER BY title")
-        .fetch_all(&*state.pool)
-        .await?;
+    let rows = sqlx::query!(
+        r#"SELECT id, title, COALESCE(slug, id::STRING) AS "slug!" FROM wftda_teams ORDER BY title"#
+    )
+    .fetch_all(&*state.pool)
+    .await?;
 
-    let league = group_leagues(rows.into_iter().map(|r| (r.id, r.title)).collect())
+    let league = group_leagues(rows.into_iter().map(|r| (r.id, r.title, r.slug)).collect())
         .into_iter()
         .find(|l| l.league_canonical == league_canonical)
         .ok_or(AppError::NotFound)?;

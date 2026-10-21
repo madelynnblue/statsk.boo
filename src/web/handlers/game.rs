@@ -12,7 +12,10 @@ use serde::Serialize;
 struct TeamHeader {
     id: i64,
     title: String,
+    /// WFTDA slug, when the team has one.
     slug: Option<String>,
+    /// Site path segment: the slug, or the numeric id as a fallback.
+    path: String,
     score: i16,
 }
 
@@ -63,12 +66,20 @@ pub async fn handle(
     let home = TeamHeader {
         id: row.team_1_id,
         title: row.team_1_title,
+        path: row
+            .team_1_slug
+            .clone()
+            .unwrap_or_else(|| row.team_1_id.to_string()),
         slug: row.team_1_slug,
         score: row.team_1_score,
     };
     let away = TeamHeader {
         id: row.team_2_id,
         title: row.team_2_title,
+        path: row
+            .team_2_slug
+            .clone()
+            .unwrap_or_else(|| row.team_2_id.to_string()),
         slug: row.team_2_slug,
         score: row.team_2_score,
     };

@@ -1,0 +1,64 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT g.id,\n                  g.date,\n                  opp.title AS opponent_title,\n                  opp.slug AS \"opponent_slug?\",\n                  COALESCE(opp.slug, opp.id::STRING) AS \"opponent_path!\",\n                  CASE WHEN g.team_1_id = $1 THEN g.team_1_score ELSE g.team_2_score END AS \"our_score!\",\n                  CASE WHEN g.team_1_id = $1 THEN g.team_2_score ELSE g.team_1_score END AS \"their_score!\",\n                  (SELECT m.drive_file_id\n                     FROM game_matches m\n                    WHERE m.wftda_game_id = g.id\n                    ORDER BY m.drive_file_id\n                    LIMIT 1) AS \"statsbook_drive_file_id?\"\n             FROM wftda_games g\n             JOIN wftda_teams opp\n               ON opp.id = CASE WHEN g.team_1_id = $1 THEN g.team_2_id ELSE g.team_1_id END\n            WHERE g.team_1_id = $1 OR g.team_2_id = $1\n            ORDER BY g.date DESC, g.id DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 2,
+        "name": "opponent_title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "opponent_slug?",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "opponent_path!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "our_score!",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 6,
+        "name": "their_score!",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 7,
+        "name": "statsbook_drive_file_id?",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "1b173e4ada8078ccae9bd0c3006181c564b3130ec985e047884a1bd4f9a6dbe1"
+}

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, title FROM wftda_teams ORDER BY title",
+  "query": "SELECT id, title, COALESCE(slug, id::STRING) AS \"slug!\" FROM wftda_teams ORDER BY title",
   "describe": {
     "columns": [
       {
@@ -12,6 +12,11 @@
         "ordinal": 1,
         "name": "title",
         "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "slug!",
+        "type_info": "Text"
       }
     ],
     "parameters": {
@@ -19,8 +24,9 @@
     },
     "nullable": [
       false,
-      false
+      false,
+      null
     ]
   },
-  "hash": "3384b38b21a83e0d5656bd1cbb461b2041bccd419c78a4555ca5efe0da4ccbbc"
+  "hash": "3ccc9fb6aadfc2bcf350f9527ba7fed36247f03970d4f91803d8330d01730563"
 }

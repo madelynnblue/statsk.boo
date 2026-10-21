@@ -9,6 +9,8 @@ use std::collections::HashMap;
 pub struct TeamEntry {
     pub id: i64,
     pub title: String,
+    /// WFTDA slug, or the numeric id for the few stub teams that have none.
+    pub slug: String,
 }
 
 #[derive(Serialize)]
@@ -28,14 +30,14 @@ pub fn derive_league(title: &str) -> &str {
     }
 }
 
-pub fn group_leagues(rows: Vec<(i64, String)>) -> Vec<LeagueEntry> {
+pub fn group_leagues(rows: Vec<(i64, String, String)>) -> Vec<LeagueEntry> {
     let mut groups: HashMap<String, (Vec<String>, Vec<TeamEntry>)> = HashMap::new();
 
-    for (id, title) in rows {
+    for (id, title, slug) in rows {
         let league = derive_league(&title).to_string();
         let entry = groups.entry(canonicalize_league(&league)).or_default();
         entry.0.push(league);
-        entry.1.push(TeamEntry { id, title });
+        entry.1.push(TeamEntry { id, title, slug });
     }
 
     let mut leagues: Vec<LeagueEntry> = groups
@@ -57,11 +59,13 @@ pub fn group_leagues(rows: Vec<(i64, String)>) -> Vec<LeagueEntry> {
 }
 
 pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppError> {
-    let rows = sqlx::query!("SELECT id, title FROM wftda_teams ORDER BY title")
-        .fetch_all(&*state.pool)
-        .await?;
+    let rows = sqlx::query!(
+        r#"SELECT id, title, COALESCE(slug, id::STRING) AS "slug!" FROM wftda_teams ORDER BY title"#
+    )
+    .fetch_all(&*state.pool)
+    .await?;
 
-    let leagues = group_leagues(rows.into_iter().map(|r| (r.id, r.title)).collect());
+    let leagues = group_leagues(rows.into_iter().map(|r| (r.id, r.title, r.slug)).collect());
 
     let tmpl = state.env.get_template("leagues.html")?;
     let html = tmpl.render(minijinja::context! { leagues })?;
@@ -72,8 +76,8 @@ pub async fn handle(State(state): State<AppState>) -> Result<Html<String>, AppEr
 mod tests {
     use super::*;
 
-    fn row(id: i64, title: &str) -> (i64, String) {
-        (id, title.into())
+    fn row(id: i64, title: &str) -> (i64, String, String) {
+        (id, title.into(), format!("slug-{id}"))
     }
 
     #[test]

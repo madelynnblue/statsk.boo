@@ -138,7 +138,7 @@ have a page, even without a statsbook.
 
 - `GET /` — recent WFTDA games
 - `GET /game/{wftda_game_id}` — game page (WFTDA score/teams; statsbook detail when matched)
-- `GET /team/{wftda_team_id}` — WFTDA team record and game history
+- `GET /team/{slug}` — WFTDA team record and game history (WFTDA slug; numeric ids redirect)
 - `GET /player?team=&name=&number=` — player career page, scoped to one WFTDA team
 - `GET /search?q=...` — players, teams, and derived leagues
 - `GET /leagues` and `GET /league?league=...` — teams grouped by a league name derived from team titles

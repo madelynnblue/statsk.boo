@@ -42,7 +42,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/", get(handlers::index::handle))
         .route("/search", get(handlers::search::handle))
         .route("/player", get(handlers::player::handle))
-        .route("/team/{wftda_team_id}", get(handlers::team::handle))
+        .route("/team/{slug}", get(handlers::team::handle))
         .route("/league", get(handlers::league::handle))
         .route("/leagues", get(handlers::leagues::handle))
         .route("/game/{wftda_game_id}", get(handlers::game::handle))

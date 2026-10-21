@@ -49,7 +49,7 @@ statsk.boo (WFTDA StatsBook Browser) is **WFTDA-first**: `stats.wftda.com` is th
 
 **Identity:**
 - Game = `wftda_game_id` (the id at `https://stats.wftda.com/games/{id}`). Route: `GET /game/{wftda_game_id}`.
-- Team = `wftda_team_id`. Route: `GET /team/{wftda_team_id}`.
+- Team = `wftda_team_id`, but the public route is `GET /team/{slug}` (the WFTDA slug; numeric ids redirect; the ~24 stub teams without a slug fall back to their id).
 - Player = `(wftda_team_id, name_canonical, number)` — per-team, because WFTDA has no player entities (decision 10). Route: `GET /player?team=&name=&number=`.
 - Statsbook artifact = `statsbooks.drive_file_id`. Duplicate uploads are resolved by game identity: stage 6's `dedup_matched_games` keeps the newest `statsbooks.modified_time` per `wftda_game_id` and hides the rest (`wftda_game_id = NULL`, `method = 'duplicate'`), so there is no content fingerprint.
 - League is not an entity: WFTDA has no league table, so the site derives leagues heuristically from team titles (`web/handlers/leagues.rs::derive_league` — the text before the first `:`, else the whole title).
@@ -95,7 +95,7 @@ Three parser behaviours carried over from the redesign (see `docs/wftda-first-re
 - The IGRF roster is stored in full: a trailing `*` marks a player who took zero jams, and it is stripped from the number rather than dropping the player, so bench and 0-jam players still appear in rosters.
 
 **Web layer:**
-- Routes: `GET /` (recent WFTDA games), `GET /search?q=` (players, teams, derived leagues, and tournaments/venues from matched statsbooks), `GET /player?team=&name=&number=`, `GET /team/{wftda_team_id}`, `GET /leagues`, `GET /league?league=`, `GET /game/{wftda_game_id}`, `GET /about`, `GET /robots.txt`
+- Routes: `GET /` (recent WFTDA games), `GET /search?q=` (players, teams, derived leagues, and tournaments/venues from matched statsbooks), `GET /player?team=&name=&number=`, `GET /team/{slug}`, `GET /leagues`, `GET /league?league=`, `GET /game/{wftda_game_id}`, `GET /about`, `GET /robots.txt`
 - `AppState` holds `Arc<PgPool>`, `Arc<Environment<'static>>` (Minijinja templates), and `Arc<Cache>` (the in-process brotli response cache from `src/web/cache.rs`; `/search` is never cached, and the ingest loops clear it after writes)
 - Templates are compiled at build time via `include_str!` in `build_template_env()`
 - A game page renders WFTDA identity/score always, and rosters/jams/penalties/summary only when a `game_matches` row links a statsbook; it links out to `stats.wftda.com/games/{id}` and (when matched) the Drive file

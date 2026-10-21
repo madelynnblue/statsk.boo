@@ -16,6 +16,7 @@ pub struct SearchParams {
 struct PlayerResult {
     team_id: i64,
     team_title: String,
+    team_slug: String,
     name: String,
     number: String,
 }
@@ -24,6 +25,7 @@ struct PlayerResult {
 struct TeamResult {
     id: i64,
     title: String,
+    slug: String,
     league: String,
 }
 
@@ -31,9 +33,9 @@ struct TeamResult {
 struct GameResult {
     wftda_game_id: i64,
     date: chrono::NaiveDate,
-    home_id: i64,
+    home_slug: String,
     home_title: String,
-    away_id: i64,
+    away_slug: String,
     away_title: String,
     home_score: i16,
     away_score: i16,
@@ -54,7 +56,8 @@ pub async fn handle(
 
         // --- WFTDA teams ---------------------------------------------------
         let team_rows = sqlx::query!(
-            r#"SELECT id, title FROM wftda_teams
+            r#"SELECT id, title, COALESCE(slug, id::STRING) AS "slug!"
+                 FROM wftda_teams
                 WHERE title ILIKE $1
                 ORDER BY title
                 LIMIT 200"#,
@@ -68,6 +71,7 @@ pub async fn handle(
             .map(|r| TeamResult {
                 id: r.id,
                 title: r.title.clone(),
+                slug: r.slug.clone(),
                 league: derive_league(&r.title).to_string(),
             })
             .collect();
@@ -94,6 +98,7 @@ pub async fn handle(
         let player_rows = sqlx::query!(
             r#"SELECT s.wftda_team_id AS "team_id!",
                       t.title AS team_title,
+                      COALESCE(t.slug, t.id::STRING) AS "team_slug!",
                       sk.name, sk.name_canonical, sk.number
                  FROM statsbook_skaters sk
                  JOIN statsbook_sides s
@@ -109,22 +114,25 @@ pub async fn handle(
         .fetch_all(&*state.pool)
         .await?;
 
-        let mut player_groups: HashMap<(i64, String, String), (String, Vec<String>)> =
+        let mut player_groups: HashMap<(i64, String, String), (String, String, Vec<String>)> =
             HashMap::new();
         for r in &player_rows {
             let entry = player_groups
                 .entry((r.team_id, r.name_canonical.clone(), r.number.clone()))
-                .or_insert_with(|| (r.team_title.clone(), Vec::new()));
-            entry.1.push(r.name.clone());
+                .or_insert_with(|| (r.team_title.clone(), r.team_slug.clone(), Vec::new()));
+            entry.2.push(r.name.clone());
         }
         let mut players: Vec<PlayerResult> = player_groups
             .into_iter()
-            .map(|((team_id, _, number), (team_title, names))| PlayerResult {
-                team_id,
-                team_title,
-                name: best_name(names.iter().map(|s| s.as_str())).unwrap_or_default(),
-                number,
-            })
+            .map(
+                |((team_id, _, number), (team_title, team_slug, names))| PlayerResult {
+                    team_id,
+                    team_title,
+                    team_slug,
+                    name: best_name(names.iter().map(|s| s.as_str())).unwrap_or_default(),
+                    number,
+                },
+            )
             .collect();
         players.sort_by(|a, b| {
             a.name
@@ -139,8 +147,10 @@ pub async fn handle(
                       SELECT DISTINCT ON (g.id)
                              g.id AS wftda_game_id,
                              g.date,
-                             t1.id AS home_id,  t1.title AS home_title,
-                             t2.id AS away_id,  t2.title AS away_title,
+                             COALESCE(t1.slug, t1.id::STRING) AS "home_slug!",
+                             t1.title AS home_title,
+                             COALESCE(t2.slug, t2.id::STRING) AS "away_slug!",
+                             t2.title AS away_title,
                              g.team_1_score AS home_score,
                              g.team_2_score AS away_score,
                              sg.tournament, sg.venue_name, sg.venue_city, sg.venue_state
@@ -168,9 +178,9 @@ pub async fn handle(
             .map(|r| GameResult {
                 wftda_game_id: r.wftda_game_id,
                 date: r.date,
-                home_id: r.home_id,
+                home_slug: r.home_slug,
                 home_title: r.home_title,
-                away_id: r.away_id,
+                away_slug: r.away_slug,
                 away_title: r.away_title,
                 home_score: r.home_score,
                 away_score: r.away_score,

@@ -1,15 +1,18 @@
+use crate::web::handlers::leagues::derive_league;
 use crate::web::{AppState, error::AppError};
 use axum::extract::{Path, State};
-use axum::response::Html;
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use serde::Serialize;
 
 #[derive(Serialize)]
 struct GameRow {
     game_id: i64,
     date: String,
-    opponent_id: i64,
     opponent_title: String,
+    /// WFTDA slug, when the team has one (`None` for stub teams).
     opponent_slug: Option<String>,
+    /// Site path segment: the slug, or the numeric id as a fallback.
+    opponent_path: String,
     our_score: i16,
     their_score: i16,
     result: String,
@@ -27,24 +30,34 @@ struct Record {
 
 pub async fn handle(
     State(state): State<AppState>,
-    Path(wftda_team_id): Path<i64>,
-) -> Result<Html<String>, AppError> {
+    Path(team_ident): Path<String>,
+) -> Result<Response, AppError> {
+    let numeric_id = team_ident.parse::<i64>().ok();
     let team = sqlx::query!(
         r#"SELECT id, title, slug AS "slug?", region AS "region?"
              FROM wftda_teams
-            WHERE id = $1"#,
-        wftda_team_id,
+            WHERE slug = $1 OR id = $2"#,
+        &team_ident,
+        numeric_id,
     )
     .fetch_optional(&*state.pool)
     .await?
     .ok_or(AppError::NotFound)?;
 
+    // Old numeric URLs (and any non-canonical path) redirect to the slug.
+    if numeric_id.is_some()
+        && let Some(ref slug) = team.slug
+    {
+        return Ok(Redirect::permanent(&format!("/team/{slug}")).into_response());
+    }
+    let team_id = team.id;
+
     let rows = sqlx::query!(
         r#"SELECT g.id,
                   g.date,
-                  CASE WHEN g.team_1_id = $1 THEN g.team_2_id ELSE g.team_1_id END AS "opponent_id!",
                   opp.title AS opponent_title,
-                  opp.slug  AS "opponent_slug?",
+                  opp.slug AS "opponent_slug?",
+                  COALESCE(opp.slug, opp.id::STRING) AS "opponent_path!",
                   CASE WHEN g.team_1_id = $1 THEN g.team_1_score ELSE g.team_2_score END AS "our_score!",
                   CASE WHEN g.team_1_id = $1 THEN g.team_2_score ELSE g.team_1_score END AS "their_score!",
                   (SELECT m.drive_file_id
@@ -57,7 +70,7 @@ pub async fn handle(
                ON opp.id = CASE WHEN g.team_1_id = $1 THEN g.team_2_id ELSE g.team_1_id END
             WHERE g.team_1_id = $1 OR g.team_2_id = $1
             ORDER BY g.date DESC, g.id DESC"#,
-        wftda_team_id,
+        team_id,
     )
     .fetch_all(&*state.pool)
     .await?;
@@ -86,9 +99,9 @@ pub async fn handle(
         games.push(GameRow {
             game_id: row.id,
             date: row.date.to_string(),
-            opponent_id: row.opponent_id,
             opponent_title: row.opponent_title,
             opponent_slug: row.opponent_slug,
+            opponent_path: row.opponent_path,
             our_score: row.our_score,
             their_score: row.their_score,
             result: result.to_string(),
@@ -96,14 +109,16 @@ pub async fn handle(
         });
     }
 
+    let league = derive_league(&team.title).to_string();
     let tmpl = state.env.get_template("team.html")?;
     let html = tmpl.render(minijinja::context! {
         team_id => team.id,
         title   => team.title,
         slug    => team.slug,
         region  => team.region,
+        league,
         record,
         games,
     })?;
-    Ok(Html(html))
+    Ok(Html(html).into_response())
 }

@@ -488,11 +488,19 @@ async fn web_pages_render_against_fixture_seed() {
     println!("generated columns: {tournament:?} / {venue_name:?}, {venue_city:?}, {venue_state:?}");
 
     // ---- Values the pages must render -------------------------------------
-    let (player_team_id, player_name, player_number): (i64, String, String) = sqlx::query_as(
-        r#"SELECT s.wftda_team_id, sk.name, sk.number
+    let (player_team_id, player_team_path, player_name, player_number): (
+        i64,
+        String,
+        String,
+        String,
+    ) = sqlx::query_as(
+        r#"SELECT s.wftda_team_id,
+                  COALESCE(t.slug, t.id::STRING) AS team_path,
+                  sk.name, sk.number
              FROM statsbook_skaters sk
              JOIN statsbook_sides s
                ON s.drive_file_id = sk.drive_file_id AND s.side = sk.side
+             JOIN wftda_teams t ON t.id = s.wftda_team_id
             WHERE sk.drive_file_id = $1 AND s.wftda_team_id IS NOT NULL
             ORDER BY sk.number
             LIMIT 1"#,
@@ -557,12 +565,12 @@ async fn web_pages_render_against_fixture_seed() {
     assert_contains(&body, "/player?team=", "matched game: player links");
     assert_contains(
         &body,
-        &format!("/team/{TEAM_HOME_ID}"),
+        &format!("/team/{TEAM_HOME_SLUG}"),
         "matched game: home team link",
     );
     assert_contains(
         &body,
-        &format!("/team/{TEAM_AWAY_ID}"),
+        &format!("/team/{TEAM_AWAY_SLUG}"),
         "matched game: away team link",
     );
     println!("OK  matched game page {uri} ({} bytes)", body.len());
@@ -579,12 +587,12 @@ async fn web_pages_render_against_fixture_seed() {
     assert_contains(&body, "Final Score:", "unmatched game: score");
     assert_contains(
         &body,
-        &format!("/team/{TEAM_UNMATCHED_1_ID}"),
+        &format!("/team/{TEAM_UNMATCHED_1_SLUG}"),
         "unmatched game: home team link",
     );
     assert_contains(
         &body,
-        &format!("/team/{TEAM_UNMATCHED_2_ID}"),
+        &format!("/team/{TEAM_UNMATCHED_2_SLUG}"),
         "unmatched game: away team link",
     );
     assert_not_contains(
@@ -601,13 +609,19 @@ async fn web_pages_render_against_fixture_seed() {
     println!("OK  unknown game id -> 404");
 
     // ===== Team page ======================================================
-    let uri = format!("/team/{TEAM_HOME_ID}");
+    let uri = format!("/team/{TEAM_HOME_SLUG}");
     let (status, body) = get(&app, &uri).await;
     assert_eq!(status, StatusCode::OK, "GET {uri}");
     assert_contains(
         &body,
         &format!("https://stats.wftda.com/team/{TEAM_HOME_SLUG}"),
         "team page: WFTDA team link",
+    );
+    assert_contains(&body, "/league?league=", "team page: league link");
+    assert_contains(
+        &body,
+        derive_league(TEAM_HOME_TITLE),
+        "team page: league name",
     );
     assert_contains(&body, "Game History", "team page: game history");
     assert_contains(&body, ">W<", "team page: W/L/T record");
@@ -619,6 +633,15 @@ async fn web_pages_render_against_fixture_seed() {
     );
     assert_contains(&body, TEAM_HOME_TITLE, "team page: title");
     println!("OK  team page {uri} ({} bytes)", body.len());
+
+    // Old numeric URLs redirect to the slug.
+    let (status, _) = get(&app, &format!("/team/{TEAM_HOME_ID}")).await;
+    assert_eq!(
+        status,
+        StatusCode::PERMANENT_REDIRECT,
+        "numeric team URL must redirect to the slug"
+    );
+    println!("OK  numeric team URL -> 308");
 
     // ===== Player page ====================================================
     let uri = format!(
@@ -633,7 +656,7 @@ async fn web_pages_render_against_fixture_seed() {
     assert_contains(&body, "/game/", "player page: game history links");
     assert_contains(
         &body,
-        &format!("/team/{player_team_id}"),
+        &format!("/team/{player_team_path}"),
         "player page: team link",
     );
     println!("OK  player page {uri} ({} bytes)", body.len());
@@ -656,7 +679,11 @@ async fn web_pages_render_against_fixture_seed() {
     let (status, body) = get(&app, &uri).await;
     assert_eq!(status, StatusCode::OK, "GET {uri}");
     assert_contains(&body, "<h2>Teams</h2>", "search: teams section");
-    assert_contains(&body, &format!("/team/{TEAM_HOME_ID}"), "search: team link");
+    assert_contains(
+        &body,
+        &format!("/team/{TEAM_HOME_SLUG}"),
+        "search: team link",
+    );
     assert_contains(&body, "/league?league=", "search: league link");
     println!("OK  search {uri} ({} bytes)", body.len());
 

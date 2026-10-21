@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, title, slug AS \"slug?\", region AS \"region?\"\n             FROM wftda_teams\n            WHERE id = $1",
+  "query": "SELECT id, title, slug AS \"slug?\",\n                  COALESCE(slug, id::STRING) AS \"path!\"\n             FROM wftda_teams\n            WHERE id = $1",
   "describe": {
     "columns": [
       {
@@ -20,7 +20,7 @@
       },
       {
         "ordinal": 3,
-        "name": "region?",
+        "name": "path!",
         "type_info": "Text"
       }
     ],
@@ -33,8 +33,8 @@
       false,
       false,
       true,
-      true
+      null
     ]
   },
-  "hash": "6fc4685f370bcae229b46017fa56465091cf7d1f4a404a28ac635e5ce00423a4"
+  "hash": "675d923b8ae018c98b862fa0ac8cc2bbc37c3c1fbe0969c4a9cb0c141c753f9e"
 }

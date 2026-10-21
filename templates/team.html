@@ -5,6 +5,7 @@
 <p>
   {% if slug %}<a href="https://stats.wftda.com/team/{{ slug }}" target="_blank">View WFTDA team page</a>{% endif %}
   {%- if region %} · <span style="color:var(--muted)">{{ region }}</span>{% endif %}
+  {%- if league %} · League: <a href="/league?league={{ league | urlencode }}">{{ league }}</a>{% endif %}
 </p>
 
 <h2>Record</h2>
@@ -22,7 +23,7 @@
   {% for g in games %}
     <tr>
       <td><a href="/game/{{ g.game_id }}">{{ g.date }}</a></td>
-      <td><a href="/team/{{ g.opponent_id }}">{{ g.opponent_title }}</a>{% if g.opponent_slug %}<br><small><a href="https://stats.wftda.com/team/{{ g.opponent_slug }}" target="_blank">WFTDA</a></small>{% endif %}</td>
+      <td><a href="/team/{{ g.opponent_path }}">{{ g.opponent_title }}</a>{% if g.opponent_slug %}<br><small><a href="https://stats.wftda.com/team/{{ g.opponent_slug }}" target="_blank">WFTDA</a></small>{% endif %}</td>
       <td>{{ g.our_score }}–{{ g.their_score }}</td>
       <td><strong>{{ g.result }}</strong></td>
       <td>

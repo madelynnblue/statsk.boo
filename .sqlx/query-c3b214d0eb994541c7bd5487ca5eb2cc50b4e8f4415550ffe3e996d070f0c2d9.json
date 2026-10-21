@@ -1,0 +1,78 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT sk.drive_file_id,\n                  sk.side AS \"side!: String\",\n                  sk.name,\n                  g.home_score, g.away_score,\n                  g.game_data AS \"game_data?\",\n                  wg.id AS wftda_game_id,\n                  wg.date,\n                  opp.title AS opponent_title,\n                  COALESCE(opp.slug, opp.id::STRING) AS \"opponent_path!\"\n             FROM statsbook_skaters sk\n             JOIN statsbook_sides s\n               ON s.drive_file_id = sk.drive_file_id AND s.side = sk.side\n             JOIN statsbook_games g ON g.drive_file_id = sk.drive_file_id\n             JOIN game_matches m\n               ON m.drive_file_id = sk.drive_file_id AND m.wftda_game_id IS NOT NULL\n             JOIN wftda_games wg ON wg.id = m.wftda_game_id\n             JOIN wftda_teams opp\n               ON opp.id = CASE WHEN wg.team_1_id = $1 THEN wg.team_2_id ELSE wg.team_1_id END\n            WHERE s.wftda_team_id = $1 AND sk.name_canonical = $2 AND sk.number = $3\n            ORDER BY wg.date DESC, wg.id DESC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "drive_file_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "side!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "home_score",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 4,
+        "name": "away_score",
+        "type_info": "Int2"
+      },
+      {
+        "ordinal": 5,
+        "name": "game_data?",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 6,
+        "name": "wftda_game_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "date",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 8,
+        "name": "opponent_title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "opponent_path!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "c3b214d0eb994541c7bd5487ca5eb2cc50b4e8f4415550ffe3e996d070f0c2d9"
+}
