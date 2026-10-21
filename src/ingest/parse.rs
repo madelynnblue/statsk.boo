@@ -11,7 +11,7 @@ use std::io::Cursor;
 
 /// Bump this whenever the parsing logic changes, so the ingester can re-parse
 /// games that were ingested with an older version of the parser.
-pub const PARSER_VERSION: i64 = 22;
+pub const PARSER_VERSION: i64 = 23;
 
 pub fn parse_statsbook(bytes: &[u8]) -> Result<GameData> {
     let (game, _) = parse_statsbook_with_date(bytes, None)?;
@@ -49,6 +49,12 @@ pub fn parse_statsbook_with_date(
     let penalties = parse_penalties(&mut wb, &igrf)?;
     let home_jam_counts = compute_jam_counts(&periods, Side::Home);
     let away_jam_counts = compute_jam_counts(&periods, Side::Away);
+    // The "% Jams Skated" column in the Game Summary is a formula over the
+    // workbook's own jam count (LU!D3+LU!D102, itself MAX of the Score sheet's
+    // per-period jam counts). Some statsbooks are saved with those cached values
+    // stale (LU!D3 = 0), so the cached per-player percentage comes out blank even
+    // though the jams exist. Keep the count we parsed for the fallback below.
+    let total_jams: u32 = periods.iter().map(|p| p.jams.len() as u32).sum();
 
     // Prefer the statsbook's own cached Game Summary values when present and
     // non-trivial: they are the official calculated numbers for the game.
@@ -71,13 +77,20 @@ pub fn parse_statsbook_with_date(
             &away_players,
             &home_jam_counts,
             &away_jam_counts,
+            total_jams,
         )
         .ok()
         .filter(|gs| {
             gs.home_totals.jams_total.unwrap_or(0) > 0 && gs.away_totals.jams_total.unwrap_or(0) > 0
         })
         .or_else(|| {
-            parse_game_summary_formualizer(bytes, &home_players, &away_players, gs_cached.as_ref())
+            parse_game_summary_formualizer(
+                bytes,
+                &home_players,
+                &away_players,
+                gs_cached.as_ref(),
+                total_jams,
+            )
         })
     } else {
         None
@@ -777,6 +790,7 @@ fn parse_game_summary_formualizer(
     home_numbers: &HashSet<String>,
     away_numbers: &HashSet<String>,
     gs_cached: Option<&Range<Data>>,
+    total_jams: u32,
 ) -> Option<GameSummary> {
     let adapter = CalamineAdapter::open_bytes(bytes.to_vec()).ok()?;
     let cfg = WorkbookConfig::ephemeral();
@@ -784,17 +798,21 @@ fn parse_game_summary_formualizer(
     wb.evaluate_all().ok()?;
 
     let home_players: Vec<SummaryPlayer> = (6u32..=25)
-        .filter_map(|row| read_summary_player(&wb, gs_cached, row))
+        .filter_map(|row| read_summary_player(&wb, gs_cached, row, total_jams))
         .filter(|p| !is_zero_jam_player(&p.number) && home_numbers.contains(&p.number))
         .collect();
     let away_players: Vec<SummaryPlayer> = (28u32..=47)
-        .filter_map(|row| read_summary_player(&wb, gs_cached, row))
+        .filter_map(|row| read_summary_player(&wb, gs_cached, row, total_jams))
         .filter(|p| !is_zero_jam_player(&p.number) && away_numbers.contains(&p.number))
         .collect();
 
+    let mut home_totals = read_summary_totals(&wb, gs_cached, 26);
+    fill_totals_jams_pct(&mut home_totals, &home_players);
+    let mut away_totals = read_summary_totals(&wb, gs_cached, 48);
+    fill_totals_jams_pct(&mut away_totals, &away_players);
     Some(GameSummary {
-        home_totals: read_summary_totals(&wb, gs_cached, 26),
-        away_totals: read_summary_totals(&wb, gs_cached, 48),
+        home_totals,
+        away_totals,
         home_players,
         away_players,
     })
@@ -823,10 +841,11 @@ fn read_summary_player(
     wb: &Workbook,
     cached: Option<&Range<Data>>,
     row: u32,
+    total_jams: u32,
 ) -> Option<SummaryPlayer> {
     let number = lv_string(fv_val(wb, cached, row, 1))?;
     let name = lv_string(fv_val(wb, cached, row, 2)).unwrap_or_default();
-    let summary = SummaryPlayer {
+    let mut summary = SummaryPlayer {
         number,
         name,
         jams_jammer: lv_u8(fv_val(wb, cached, row, 3)),
@@ -866,6 +885,7 @@ fn read_summary_player(
         total_vtar_avg_plus_minus: lv_f32(fv_val(wb, cached, row, 37)),
         penalty_count: lv_u8(fv_val(wb, cached, row, 38)),
     };
+    fill_jams_pct(&mut summary, total_jams);
     if summary.jams_total == Some(0) {
         return None;
     }
@@ -910,6 +930,56 @@ fn read_summary_totals(wb: &Workbook, cached: Option<&Range<Data>>, row: u32) ->
         vtar_pack_avg_plus_minus: lv_f32(fv_val(wb, cached, row, 36)),
         total_vtar_avg_plus_minus: lv_f32(fv_val(wb, cached, row, 37)),
         penalty_count: lv_u8(fv_val(wb, cached, row, 38)),
+    }
+}
+
+/// Derive a player's "% Jams Skated" when the statsbook's Game Summary cell is
+/// blank or a stale zero. Some files are saved with the workbook's jam-count
+/// denominator (LU!D3+LU!D102) still cached at 0, which makes the column's
+/// formula return "" for every skater even though the jams are recorded. A
+/// skater who took at least one jam is never 0% of the game, so fill those in
+/// from the jam count we parsed from the Score sheet.
+fn fill_jams_pct(summary: &mut SummaryPlayer, total_jams: u32) {
+    if total_jams == 0 {
+        return;
+    }
+    let Some(jams_total) = summary.jams_total else {
+        return;
+    };
+    if jams_total == 0 {
+        return;
+    }
+    let derived = jams_total as f32 / total_jams as f32;
+    match summary.jams_pct {
+        None => summary.jams_pct = Some(derived),
+        // Empty text becomes 0.0 on the formualizer path; it is never a real
+        // percentage for a skater with recorded jams.
+        Some(pct) if pct == 0.0 => summary.jams_pct = Some(derived),
+        Some(_) => {}
+    }
+}
+
+/// The statsbook's totals row computes "% Jams Skated" as `AVERAGE` of the
+/// skaters' percentages, so mirror that when the cached totals cell is blank or
+/// a stale zero.
+fn fill_totals_jams_pct(totals: &mut SummaryTotals, players: &[SummaryPlayer]) {
+    let needs_fill = match totals.jams_pct {
+        None => true,
+        Some(pct) => pct == 0.0,
+    };
+    if !needs_fill {
+        return;
+    }
+    let mut sum = 0.0f32;
+    let mut count = 0u32;
+    for player in players {
+        if let Some(pct) = player.jams_pct {
+            sum += pct;
+            count += 1;
+        }
+    }
+    if count > 0 {
+        totals.jams_pct = Some(sum / count as f32);
     }
 }
 
@@ -1005,22 +1075,31 @@ fn parse_game_summary<R: std::io::Read + std::io::Seek>(
     away_numbers: &HashSet<String>,
     home_jam_counts: &HashMap<String, JamCounts>,
     away_jam_counts: &HashMap<String, JamCounts>,
+    total_jams: u32,
 ) -> Result<GameSummary> {
     let sheet = wb
         .worksheet_range("Game Summary")
         .context("no Game Summary sheet")?;
     let formulas = wb.worksheet_formula("Game Summary").ok();
     let home_players: Vec<SummaryPlayer> = (5u32..=24)
-        .filter_map(|row| parse_summary_player(&sheet, &formulas, row, igrf, home_jam_counts))
+        .filter_map(|row| {
+            parse_summary_player(&sheet, &formulas, row, igrf, home_jam_counts, total_jams)
+        })
         .filter(|p| home_numbers.contains(&p.number))
         .collect();
     let away_players: Vec<SummaryPlayer> = (27u32..=46)
-        .filter_map(|row| parse_summary_player(&sheet, &formulas, row, igrf, away_jam_counts))
+        .filter_map(|row| {
+            parse_summary_player(&sheet, &formulas, row, igrf, away_jam_counts, total_jams)
+        })
         .filter(|p| away_numbers.contains(&p.number))
         .collect();
+    let mut home_totals = parse_summary_totals(&sheet, 25);
+    fill_totals_jams_pct(&mut home_totals, &home_players);
+    let mut away_totals = parse_summary_totals(&sheet, 47);
+    fill_totals_jams_pct(&mut away_totals, &away_players);
     Ok(GameSummary {
-        home_totals: parse_summary_totals(&sheet, 25),
-        away_totals: parse_summary_totals(&sheet, 47),
+        home_totals,
+        away_totals,
         home_players,
         away_players,
     })
@@ -1032,6 +1111,7 @@ fn parse_summary_player(
     row: u32,
     igrf: &IgrfCells,
     jam_counts: &HashMap<String, JamCounts>,
+    total_jams: u32,
 ) -> Option<SummaryPlayer> {
     let number = cell_str_with_formula(sheet, formulas, row, 0, igrf)?;
     if is_zero_jam_player(&number) {
@@ -1041,7 +1121,7 @@ fn parse_summary_player(
     let jc = jam_counts.get(&number).copied().unwrap_or_default();
     let sheet_total = cell_opt_u8(sheet, row, 5);
     let use_computed = sheet_total.unwrap_or(0) == 0 && jc.total > 0;
-    let summary = SummaryPlayer {
+    let mut summary = SummaryPlayer {
         number,
         name,
         jams_jammer: if use_computed {
@@ -1097,6 +1177,7 @@ fn parse_summary_player(
         total_vtar_avg_plus_minus: cell_opt_f32(sheet, row, 36),
         penalty_count: cell_opt_u8(sheet, row, 37),
     };
+    fill_jams_pct(&mut summary, total_jams);
     if summary.jams_total == Some(0) {
         return None;
     }

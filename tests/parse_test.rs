@@ -410,6 +410,35 @@ fn test_fixture_summary_totals() {
     assert_eq!(fefe.jams_total, Some(10));
 }
 
+/// Some statsbooks cache a stale Game Summary jam-count denominator
+/// (LU!D3/LU!D102 = 0), so the "% Jams Skated" column evaluates to "" for every
+/// skater even though the jams are recorded on the Score sheet. The parser must
+/// derive the percentage from the parsed jam count instead of leaving it blank
+/// (game 69053: Rose City vs Victorian, 2026-10-18).
+#[test]
+fn test_stale_jams_pct_denominator_is_derived() {
+    let game = parse_fixture("rose-city-victorian-2026-10-18.xlsx");
+    let gs = game.game_summary.as_ref().unwrap();
+    // The Score sheet records 27 jams in period 1 and 24 in period 2.
+    let total_jams = 51.0f32;
+
+    let zip = gs.home_players.iter().find(|p| p.number == "0").unwrap();
+    assert_eq!(zip.jams_total, Some(4));
+    assert!((zip.jams_pct.unwrap() - 4.0 / total_jams).abs() < 0.001);
+
+    let pavey = gs.away_players.iter().find(|p| p.number == "4000").unwrap();
+    assert_eq!(pavey.jams_total, Some(15));
+    assert!((pavey.jams_pct.unwrap() - 15.0 / total_jams).abs() < 0.001);
+
+    // The totals row mirrors the statsbook's AVERAGE formula over the skaters.
+    assert!((gs.home_totals.jams_pct.unwrap() - 1.0 / 3.0).abs() < 0.001);
+    assert!((gs.away_totals.jams_pct.unwrap() - 5.0 / 14.0).abs() < 0.001);
+
+    // Cached lead percentages must be left untouched by the fill.
+    let darth = gs.home_players.iter().find(|p| p.number == "85").unwrap();
+    assert_eq!(darth.lead_pct, Some(0.5));
+}
+
 /// Blank team/league IGRF header cells must fall back to the other value so
 /// the side keeps its identity (required by the match path).
 #[test]
