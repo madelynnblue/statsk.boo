@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT drive_file_id FROM statsbooks WHERE last_seen < $1",
+  "query": "DELETE FROM statsbooks WHERE last_seen < $1 RETURNING drive_file_id",
   "describe": {
     "columns": [
       {
@@ -18,5 +18,5 @@
       false
     ]
   },
-  "hash": "5b2daeae2aed47fa5ffb24335ed924c69c4f8977b8c0069f9ea687516b2eb9e3"
+  "hash": "f8ebaacc368cfd5f09b88c80b0fc3a87738cd6fa9023148b63e543959eec68f0"
 }

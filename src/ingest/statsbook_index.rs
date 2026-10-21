@@ -137,19 +137,16 @@ pub async fn mark_removed(
     seen_before: DateTime<Utc>,
     cache_dir: Option<&Path>,
 ) -> Result<u64> {
-    // Collect the ids before the DELETE: the statsbooks row is the only thing
-    // that maps a Drive file id to its cache file.
+    // `RETURNING` yields the drive file ids (the only mapping to a cache file)
+    // from the rows actually deleted, so this is one scan instead of a SELECT
+    // followed by an identical DELETE.
     let doomed = sqlx::query_scalar!(
-        "SELECT drive_file_id FROM statsbooks WHERE last_seen < $1",
+        "DELETE FROM statsbooks WHERE last_seen < $1 RETURNING drive_file_id",
         seen_before,
     )
     .fetch_all(pool)
     .await?;
-
-    let result = sqlx::query!("DELETE FROM statsbooks WHERE last_seen < $1", seen_before,)
-        .execute(pool)
-        .await?;
-    let removed = result.rows_affected();
+    let removed = doomed.len() as u64;
 
     if let Some(dir) = cache_dir {
         for drive_file_id in &doomed {

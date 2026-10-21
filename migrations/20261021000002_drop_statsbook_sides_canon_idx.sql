@@ -1,0 +1,12 @@
+-- Drop the vestigial canonical-name index on `statsbook_sides`.
+--
+-- The team matcher runs in memory (`resolve::Matcher` over `canon::TrigramSet`),
+-- so `league_canonical` / `team_canonical` are only ever selected or written,
+-- never used to filter or join. The index was carried over from the legacy
+-- SQL-based matcher (docs/wftda-linking-investigation.md) and was never read:
+-- `crdb_internal.index_usage_statistics` had it at 0 reads while the primary
+-- index on the same table was read tens of thousands of times.
+--
+-- Dropping it removes one index entry from every parse-time delete/insert of
+-- the table's ~2 rows per statsbook.
+DROP INDEX IF EXISTS statsbook_sides@statsbook_sides_canon_idx;

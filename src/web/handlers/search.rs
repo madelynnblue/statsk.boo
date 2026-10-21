@@ -7,6 +7,13 @@ use axum::extract::{Query, State};
 use axum::response::Html;
 use serde::Deserialize;
 
+/// Upper bound on matching skater rows fetched before grouping. One player can
+/// contribute a row per game, so this is not the displayed limit; the rendered
+/// player list is capped at [`PLAYER_RESULT_LIMIT`].
+const PLAYER_HIT_CAP: i64 = 2000;
+/// Rendered player rows (the previous single-statement `LIMIT`).
+const PLAYER_RESULT_LIMIT: usize = 200;
+
 #[derive(Deserialize)]
 pub struct SearchParams {
     pub q: Option<String>,
@@ -95,31 +102,76 @@ pub async fn handle(
         leagues.sort();
 
         // --- Statsbook players, scoped to matched (visible) games ----------
-        let player_rows = sqlx::query!(
-            r#"SELECT s.wftda_team_id AS "team_id!",
-                      t.title AS team_title,
-                      COALESCE(t.slug, t.id::STRING) AS "team_slug!",
-                      sk.name, sk.name_canonical, sk.number
-                 FROM statsbook_skaters sk
-                 JOIN statsbook_sides s
-                   ON s.drive_file_id = sk.drive_file_id AND s.side = sk.side
-                 JOIN wftda_teams t ON t.id = s.wftda_team_id
-                 JOIN game_matches m
-                   ON m.drive_file_id = sk.drive_file_id AND m.wftda_game_id IS NOT NULL
-                WHERE sk.name ILIKE $1
-                ORDER BY t.title, sk.name, sk.number
-                LIMIT 200"#,
+        // Deliberately two statements. `name ILIKE '%…%'` makes CockroachDB
+        // assume ~42% of the table matches no matter what the pattern is, so a
+        // single statement joining the trigram hit straight to the visibility
+        // tables plans as hash joins over full scans of `statsbook_sides` and
+        // `game_matches`. The trigram index finds the few matching skaters on
+        // its own; joining that result back by id (`= ANY`) has an exact
+        // estimate and plans as primary-key lookups.
+        let skater_hits = sqlx::query!(
+            r#"SELECT drive_file_id,
+                      side AS "side!: String",
+                      name,
+                      name_canonical,
+                      number
+                 FROM statsbook_skaters
+                WHERE name ILIKE $1
+                LIMIT $2"#,
             &pattern,
+            PLAYER_HIT_CAP,
         )
         .fetch_all(&*state.pool)
         .await?;
 
+        // Team attribution and the visibility rule, for the candidate files
+        // only. A side is present here only when its game is matched.
+        let mut hit_files: Vec<String> = skater_hits
+            .iter()
+            .map(|r| r.drive_file_id.clone())
+            .collect();
+        hit_files.sort();
+        hit_files.dedup();
+
+        let mut side_teams: HashMap<(String, String), (i64, String, String)> = HashMap::new();
+        if !hit_files.is_empty() {
+            let side_rows = sqlx::query!(
+                r#"SELECT s.drive_file_id,
+                          s.side AS "side!: String",
+                          s.wftda_team_id AS "team_id!",
+                          t.title AS team_title,
+                          COALESCE(t.slug, t.id::STRING) AS "team_slug!"
+                     FROM statsbook_sides s
+                     JOIN wftda_teams t ON t.id = s.wftda_team_id
+                     JOIN game_matches m
+                       ON m.drive_file_id = s.drive_file_id
+                      AND m.wftda_game_id IS NOT NULL
+                    WHERE s.drive_file_id = ANY($1)"#,
+                &hit_files,
+            )
+            .fetch_all(&*state.pool)
+            .await?;
+            for r in side_rows {
+                side_teams.insert(
+                    (r.drive_file_id, r.side),
+                    (r.team_id, r.team_title, r.team_slug),
+                );
+            }
+        }
+
         let mut player_groups: HashMap<(i64, String, String), (String, String, Vec<String>)> =
             HashMap::new();
-        for r in &player_rows {
+        for r in &skater_hits {
+            // No entry means the statsbook is unmatched (hidden) or the side
+            // was never assigned to a team: it contributes nothing.
+            let Some((team_id, team_title, team_slug)) =
+                side_teams.get(&(r.drive_file_id.clone(), r.side.clone()))
+            else {
+                continue;
+            };
             let entry = player_groups
-                .entry((r.team_id, r.name_canonical.clone(), r.number.clone()))
-                .or_insert_with(|| (r.team_title.clone(), r.team_slug.clone(), Vec::new()));
+                .entry((*team_id, r.name_canonical.clone(), r.number.clone()))
+                .or_insert_with(|| (team_title.clone(), team_slug.clone(), Vec::new()));
             entry.2.push(r.name.clone());
         }
         let mut players: Vec<PlayerResult> = player_groups
@@ -140,8 +192,15 @@ pub async fn handle(
                 .then(a.number.cmp(&b.number))
                 .then(a.team_title.cmp(&b.team_title))
         });
+        players.truncate(PLAYER_RESULT_LIMIT);
 
         // --- Games matched to a statsbook by tournament or venue -----------
+        // Kept as one statement: a two-step split (candidate ids, then join)
+        // measured slightly faster for trigram-served patterns (~6 ms vs ~8 ms)
+        // but far slower for shorter ones — a `%xx%` pattern yields no trigram,
+        // so the candidate query falls back to a full scan of `statsbook_games`
+        // and drags the JSONB payload (270 ms, 317 MiB, vs ~28 ms here), because
+        // this shape's LIMIT lets the lookup join stop early.
         let game_rows = sqlx::query!(
             r#"SELECT * FROM (
                       SELECT DISTINCT ON (g.id)

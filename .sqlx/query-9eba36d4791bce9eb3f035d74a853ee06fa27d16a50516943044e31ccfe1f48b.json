@@ -1,0 +1,47 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT drive_file_id,\n                      side AS \"side!: String\",\n                      name,\n                      name_canonical,\n                      number\n                 FROM statsbook_skaters\n                WHERE name ILIKE $1\n                LIMIT $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "drive_file_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "side!: String",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "name_canonical",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "number",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "9eba36d4791bce9eb3f035d74a853ee06fa27d16a50516943044e31ccfe1f48b"
+}
